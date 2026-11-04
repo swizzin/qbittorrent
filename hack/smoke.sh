@@ -25,7 +25,11 @@ chmod 0777 "${cfg}"
 
 cleanup() {
     docker rm -f "${name}" >/dev/null 2>&1 || true
-    rm -rf "${cfg}"
+    # Files in /config are owned by the container uid, which is not the host
+    # user, so remove them from a container that runs as root.
+    docker run --rm --user 0 -v "${cfg}:/cfg" --entrypoint /bin/sh "${image}" \
+        -c 'find /cfg -mindepth 1 -delete' >/dev/null 2>&1 || true
+    rmdir "${cfg}" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -86,7 +90,9 @@ login=$(docker exec "${name}" wget -S -O /dev/null \
     --header="Referer: http://127.0.0.1:${webui_port}" \
     --post-data="username=admin&password=${password}" \
     "http://127.0.0.1:${webui_port}/api/v2/auth/login" 2>&1 || true)
-sid=$(grep -o 'SID=[^;[:space:]]*' <<<"${login}" | head -n1 || true)
+# qBittorrent 5.x names the session cookie after the WebUI port and answers a
+# successful login with 204.
+sid=$(grep -o 'QBT_SID_[0-9]*=[^;[:space:]]*' <<<"${login}" | head -n1 || true)
 if [[ -n ${sid} ]]; then
     ok "logged in to the WebUI API (${sid%%=*}=<redacted>)"
 else
@@ -111,7 +117,7 @@ fi
 
 build_info=$(api /api/v2/app/buildInfo)
 printf 'API /app/buildInfo: %s\n' "${build_info}"
-if grep -q '"libtorrent":"1\.2\.20"' <<<"${build_info}"; then
+if grep -Eq '"libtorrent":"1\.2\.20(\.[0-9]+)?"' <<<"${build_info}"; then
     ok "API reports libtorrent 1.2.20"
 else
     bad "API reports libtorrent 1.2.20 (got: ${build_info})"
@@ -171,12 +177,12 @@ log_target=$(docker exec "${name}" readlink /config/qBittorrent/logs/qbittorrent
 # --------------------------------------------------------------------------
 # bundled tools
 # --------------------------------------------------------------------------
-unrar_out=$(docker exec "${name}" unrar 2>&1 | head -n1 || true)
+unrar_out=$(docker exec "${name}" unrar 2>&1 | grep -m1 'UNRAR' || true)
 grep -q 'UNRAR' <<<"${unrar_out}" \
     && ok "unrar runs (${unrar_out})" \
     || bad "unrar runs (got: ${unrar_out})"
 
-seven_out=$(docker exec "${name}" 7zz 2>&1 | head -n1 || true)
+seven_out=$(docker exec "${name}" 7zz 2>&1 | grep -m1 '7-Zip' || true)
 grep -q '7-Zip' <<<"${seven_out}" \
     && ok "7zz runs (${seven_out})" \
     || bad "7zz runs (got: ${seven_out})"

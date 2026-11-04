@@ -68,10 +68,10 @@ else
 fi
 
 lt_versions=$(grep -ao 'libtorrent/[0-9][0-9.]*' "${bin}" | sort -u || true)
-if [[ ${lt_versions} == 'libtorrent/1.2.20' ]]; then
-    ok "binary carries libtorrent/1.2.20"
+if [[ ${lt_versions} == 'libtorrent/1.2.20' || ${lt_versions} == 'libtorrent/1.2.20.0' ]]; then
+    ok "binary carries libtorrent 1.2.20 (${lt_versions})"
 else
-    bad "binary carries libtorrent/1.2.20 (found: ${lt_versions:-nothing})"
+    bad "binary carries libtorrent 1.2.20 (found: ${lt_versions:-nothing})"
 fi
 
 # --------------------------------------------------------------------------
@@ -117,7 +117,7 @@ fi
 # --------------------------------------------------------------------------
 # static linkage
 # --------------------------------------------------------------------------
-if file "${bin}" | grep -q 'statically linked'; then
+if file "${bin}" | grep -Eq 'statically linked|static-pie linked'; then
     ok "binary is statically linked"
 else
     bad "binary is statically linked ($(file -b "${bin}"))"

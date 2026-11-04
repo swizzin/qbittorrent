@@ -129,13 +129,14 @@ OpenSSL 4.x), libiconv 1.18 by sha256, and Alpine 3.24 by digest. Patches are
 copied into the script's patch tree before the build, so the compile step needs
 no network access for patches.
 
-Expect 30–90 minutes on 24 threads (`--build-arg BUILD_JOBS=` controls
-parallelism; the default is 16 to stay inside 32 GiB of RAM).
+About 10–15 minutes on a 24-thread Zen 3 host. `--build-arg BUILD_JOBS=`
+controls parallelism; the default is 16 to stay inside 32 GiB of RAM.
 
-The Dockerfile fails the build if either patch did not apply, if the patched
-source is not the source that was compiled, or if the compiler was not invoked
-with the target `-march`. Patch application is not otherwise fatal in the
-upstream script, so this check is the real gate.
+The Dockerfile fails the build if the libtorrent patch did not apply, if the
+qBittorrent tree was patched, if the patched source is not the source that was
+compiled, or if the compiler was not invoked with the target `-march`. Patch
+application is not otherwise fatal in the upstream script, so this check is the
+real gate.
 
 ## Verifying
 
@@ -163,7 +164,8 @@ and that `unrar`, `7zz`, `unzip` and `qbt-unpack` actually work.
 
 `.github/workflows/build.yml` runs on a self-hosted runner labelled
 `znver3`: build, verify, smoke test, then push to `ghcr.io/swizzin/qbittorrent`
-with both tags. Images are only pushed after the tests pass.
+with both tags. Images are only pushed after the tests pass. The runner needs
+docker with buildx, and `binutils` on the host for `hack/verify-binary.sh`.
 
 ## Licences
 

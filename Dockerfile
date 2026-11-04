@@ -132,22 +132,24 @@ RUN set -eux; \
     test "$(grep -c 'Applying:' /build/build.log)" -eq 1; \
     test "$(grep -c 'Using local patches method' /build/build.log)" -ge 2; \
     command -v ninja; \
-    grep -qF 'SET(request_timeout, 20, nullptr)' /build/qbt-build/libtorrent/src/settings_pack.cpp; \
-    grep -qF 'SET(whole_pieces_threshold, 10, nullptr)' /build/qbt-build/libtorrent/src/settings_pack.cpp; \
-    grep -qF 'SET(max_peer_recv_buffer_size, 4 * 1024 * 1024, nullptr)' /build/qbt-build/libtorrent/src/settings_pack.cpp; \
-    grep -qF 'SET(torrent_connect_boost, 50, nullptr)' /build/qbt-build/libtorrent/src/settings_pack.cpp; \
-    grep -qF 'SET(predictive_piece_announce, 10, nullptr)' /build/qbt-build/libtorrent/src/settings_pack.cpp; \
-    grep -qF 'SET(send_not_sent_low_watermark, 1024 * 1024, nullptr)' /build/qbt-build/libtorrent/src/settings_pack.cpp; \
-    grep -qF 'auto *buffer = new QByteArray;' /build/qbt-build/qbittorrent/src/app/localpeer.cpp; \
-    ! grep -qF 'std::make_unique<QByteArray>()' /build/qbt-build/qbittorrent/src/app/localpeer.cpp; \
-    for module in libtorrent qbittorrent; do \
-        grep -qF -- "-march=${MARCH}" "/build/qbt-build/${module}/build/CMakeCache.txt"; \
-    done; \
-    ninja -C /build/qbt-build/libtorrent/build -t commands \
-        | grep -F 'settings_pack.cpp.o' | grep -qF -- "-march=${MARCH}"; \
-    ninja -C /build/qbt-build/qbittorrent/build -t commands \
-        | grep -F 'sessionimpl.cpp.o' | grep -qF -- "-march=${MARCH}"; \
-    /build/qbt-build/completed/qbittorrent-nox --version | grep -q '5\.3\.0'
+    lt_src=$(echo /build/qbt-build/libtorrent-rasterbar-*/src); \
+    qbt_src=$(echo /build/qbt-build/qBittorrent-*/src); \
+    grep -qF 'SET(request_timeout, 20, nullptr)' "${lt_src}/settings_pack.cpp"; \
+    grep -qF 'SET(whole_pieces_threshold, 10, nullptr)' "${lt_src}/settings_pack.cpp"; \
+    grep -qF 'SET(max_peer_recv_buffer_size, 4 * 1024 * 1024, nullptr)' "${lt_src}/settings_pack.cpp"; \
+    grep -qF 'SET(torrent_connect_boost, 50, nullptr)' "${lt_src}/settings_pack.cpp"; \
+    grep -qF 'SET(predictive_piece_announce, 10, nullptr)' "${lt_src}/settings_pack.cpp"; \
+    grep -qF 'SET(send_not_sent_low_watermark, 1024 * 1024, nullptr)' "${lt_src}/settings_pack.cpp"; \
+    grep -qF 'auto *buffer = new QByteArray;' "${qbt_src}/app/localpeer.cpp"; \
+    ! grep -qF 'std::make_unique<QByteArray>()' "${qbt_src}/app/localpeer.cpp"; \
+    grep -qF -- "-march=${MARCH}" /build/qbt-build/libtorrent-rasterbar-*/build/CMakeCache.txt; \
+    grep -qF -- "-march=${MARCH}" /build/qbt-build/qBittorrent-*/build/CMakeCache.txt; \
+    ninja -C "$(echo /build/qbt-build/libtorrent-rasterbar-*/build)" -t commands > /build/ninja-libtorrent.txt; \
+    awk -v m="-march=${MARCH}" 'index($0, "settings_pack.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-libtorrent.txt; \
+    ninja -C "$(echo /build/qbt-build/qBittorrent-*/build)" -t commands > /build/ninja-qbittorrent.txt; \
+    awk -v m="-march=${MARCH}" 'index($0, "sessionimpl.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-qbittorrent.txt; \
+    "${bin}" --version > /build/version.txt; \
+    grep -q '5\.3\.0' /build/version.txt
 
 # Provenance for the runtime image: what was built, with which target, and the
 # exact patch consumed from this repository.
