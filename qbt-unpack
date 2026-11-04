@@ -41,8 +41,11 @@ for arc in **/*.rar; do
 done
 
 # ---- zip -------------------------------------------------------------------
+# No "--" before the archive: busybox unzip (the only unzip in the runtime
+# image) drops the -d target when it sees one and extracts to the wrong
+# directory. "./" keeps a name starting with "-" from being read as an option.
 for arc in **/*.zip; do
-    if unzip -o -q -- "$arc" -d ./ </dev/null; then
+    if unzip -o -q "./$arc" -d ./ </dev/null; then
         log "extracted $arc"
     else
         log "unzip failed on $arc (rc=$?)"

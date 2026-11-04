@@ -1,0 +1,63 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/swizzin/qbittorrent
+  TAG: 5.3.0-lt1.2.20-10g-znver3
+
+jobs:
+  image:
+    name: build, verify, push
+    # Native znver3 build: the image is compiled with -march=znver3 and is not
+    # emulated, so the runner has to be a Zen 3 (or newer) machine.
+    runs-on: [self-hosted, linux, x64, znver3]
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Build
+        run: |
+          docker buildx build \
+            --load \
+            --progress=plain \
+            --build-arg MARCH=znver3 \
+            --tag "${IMAGE}:${TAG}" \
+            --tag "${IMAGE}:sha-${GITHUB_SHA::12}" \
+            .
+
+      - name: Verify binary
+        run: hack/verify-binary.sh "${IMAGE}:${TAG}"
+
+      - name: Smoke test
+        run: hack/smoke.sh "${IMAGE}:${TAG}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        run: |
+          docker push "${IMAGE}:${TAG}"
+          docker push "${IMAGE}:sha-${GITHUB_SHA::12}"

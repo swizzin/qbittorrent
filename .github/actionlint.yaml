@@ -1,0 +1,7 @@
+# actionlint configuration.
+#
+# The image is built on a self-hosted runner that is labelled with the CPU
+# microarchitecture it must have, because the build is native (-march=znver3).
+self-hosted-runner:
+  labels:
+    - znver3
