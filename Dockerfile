@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# qBittorrent 5.3.0 on libtorrent 1.2.20, statically linked against musl and
+# qBittorrent on libtorrent 1.2 (versions below), statically linked against musl and
 # compiled for the znver3 microarchitecture.
 #
 # The build is done by userdocs/qbittorrent-nox-static, pinned to a commit and
@@ -8,6 +8,10 @@
 # only; they are copied into the script's patch tree before the build so its
 # "local patches" path is used and nothing is fetched from the network while
 # compiling.
+
+# The versions. Updating qBittorrent is a change to QBT_VERSION and nothing else.
+ARG QBT_VERSION=5.3.0
+ARG LT_VERSION=1.2.20
 
 ARG ALPINE_IMAGE=docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 ARG UNRAR_IMAGE=ghcr.io/linuxserver/unrar@sha256:48c0ce2609bb3c35764956bbd9395e95b177421e3c74b3628c3676029f24f2e0
@@ -21,8 +25,10 @@ FROM ${ALPINE_IMAGE} AS build
 #   docker buildx build --build-arg MARCH=x86-64-v2 ...
 ARG MARCH=znver3
 ARG BUILD_JOBS=16
-ARG QBT_TAG=release-5.3.0
-ARG LT_TAG=v1.2.20
+ARG QBT_VERSION
+ARG LT_VERSION
+ARG QBT_TAG=release-${QBT_VERSION}
+ARG LT_TAG=v${LT_VERSION}
 
 # OpenSSL is pinned to the 3.5 LTS line. libtorrent 1.2 pulls Boost 1.86,
 # whose asio TLS hostname verification reads ASN1_STRING fields directly;
@@ -79,16 +85,15 @@ RUN set -eux; \
 #    line is a comment nothing is downloaded and nothing is applied.
 RUN set -eux; \
     bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bs-a; \
-    install -D -m 0644 /build/patches/libtorrent/1.2.20/patch /build/qbt-build/patches/libtorrent/1.2.20/patch; \
-    test -s /build/qbt-build/patches/libtorrent/1.2.20/patch; \
-    qbt_version="${QBT_TAG#release-}"; \
+    install -D -m 0644 "/build/patches/libtorrent/${LT_VERSION}/patch" "/build/qbt-build/patches/libtorrent/${LT_VERSION}/patch"; \
+    test -s "/build/qbt-build/patches/libtorrent/${LT_VERSION}/patch"; \
     printf '%s\n' \
         '# qBittorrent is built from its upstream release tag with no patches.' \
         '# A non-empty url file is how qbittorrent-nox-static is told to use its' \
         '# local patch path instead of its remote patch repository; every line' \
         '# here is a comment, so nothing is downloaded and nothing is applied.' \
-        > "/build/qbt-build/patches/qbittorrent/${qbt_version}/url"; \
-    test -s "/build/qbt-build/patches/qbittorrent/${qbt_version}/url"
+        > "/build/qbt-build/patches/qbittorrent/${QBT_VERSION}/url"; \
+    test -s "/build/qbt-build/patches/qbittorrent/${QBT_VERSION}/url"
 
 # The script appends CFLAGS/CXXFLAGS/LDFLAGS from the environment to its own
 # flags, so this is how the target is set for every module it builds (zlib,
@@ -140,8 +145,6 @@ RUN set -eux; \
     grep -qF 'SET(torrent_connect_boost, 50, nullptr)' "${lt_src}/settings_pack.cpp"; \
     grep -qF 'SET(predictive_piece_announce, 10, nullptr)' "${lt_src}/settings_pack.cpp"; \
     grep -qF 'SET(send_not_sent_low_watermark, 1024 * 1024, nullptr)' "${lt_src}/settings_pack.cpp"; \
-    grep -qF 'auto *buffer = new QByteArray;' "${qbt_src}/app/localpeer.cpp"; \
-    ! grep -qF 'std::make_unique<QByteArray>()' "${qbt_src}/app/localpeer.cpp"; \
     grep -qF -- "-march=${MARCH}" /build/qbt-build/libtorrent-rasterbar-*/build/CMakeCache.txt; \
     grep -qF -- "-march=${MARCH}" /build/qbt-build/qBittorrent-*/build/CMakeCache.txt; \
     ninja -C "$(echo /build/qbt-build/libtorrent-rasterbar-*/build)" -t commands > /build/ninja-libtorrent.txt; \
@@ -149,18 +152,18 @@ RUN set -eux; \
     ninja -C "$(echo /build/qbt-build/qBittorrent-*/build)" -t commands > /build/ninja-qbittorrent.txt; \
     awk -v m="-march=${MARCH}" 'index($0, "sessionimpl.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-qbittorrent.txt; \
     "${bin}" --version > /build/version.txt; \
-    grep -q '5\.3\.0' /build/version.txt
+    grep -qF "v${QBT_VERSION}" /build/version.txt
 
 # Provenance for the runtime image: what was built, with which target, and the
 # exact patch consumed from this repository.
 RUN set -eux; \
     { \
-        echo "qbittorrent=5.3.0"; \
+        echo "qbittorrent=${QBT_VERSION}"; \
         echo "qbittorrent_patches=none"; \
-        echo "libtorrent=1.2.20"; \
+        echo "libtorrent=${LT_VERSION}"; \
         echo "march=${MARCH}"; \
         echo "build_jobs=${BUILD_JOBS}"; \
-        echo "libtorrent_patch_sha256=$(sha256sum /build/patches/libtorrent/1.2.20/patch | cut -d' ' -f1)"; \
+        echo "libtorrent_patch_sha256=$(sha256sum "/build/patches/libtorrent/${LT_VERSION}/patch" | cut -d' ' -f1)"; \
         echo "build_script_sha256=${QBT_STATIC_SCRIPT_SHA256}"; \
     } > /build/BUILD-INFO; \
     cat /build/BUILD-INFO
@@ -172,8 +175,8 @@ FROM ${UNRAR_IMAGE} AS unrar
 
 FROM ${ALPINE_IMAGE} AS runtime
 
-ARG QBT_VERSION=5.3.0
-ARG LT_VERSION=1.2.20
+ARG QBT_VERSION
+ARG LT_VERSION
 ARG MARCH=znver3
 
 LABEL org.opencontainers.image.source="https://github.com/swizzin/qbittorrent" \

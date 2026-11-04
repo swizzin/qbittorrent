@@ -12,6 +12,11 @@
 
 set -euo pipefail
 
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+eval "$("${repo_root}/hack/versions.sh")"
+qbt_re=${QBT_VERSION//./\\.}
+lt_re=${LT_VERSION//./\\.}
+
 image="${1:-}"
 if [[ -z ${image} ]]; then
     printf 'usage: %s <image>\n' "${0##*/}" >&2
@@ -109,18 +114,18 @@ api() {
 
 api_version=$(api /api/v2/app/version)
 printf 'API /app/version: %s\n' "${api_version}"
-if grep -q '5\.3\.0' <<<"${api_version}"; then
-    ok "API reports qBittorrent 5.3.0"
+if grep -Eq "^v?${qbt_re}$" <<<"${api_version}"; then
+    ok "API reports qBittorrent ${QBT_VERSION}"
 else
-    bad "API reports qBittorrent 5.3.0 (got: ${api_version})"
+    bad "API reports qBittorrent ${QBT_VERSION} (got: ${api_version})"
 fi
 
 build_info=$(api /api/v2/app/buildInfo)
 printf 'API /app/buildInfo: %s\n' "${build_info}"
-if grep -Eq '"libtorrent":"1\.2\.20(\.[0-9]+)?"' <<<"${build_info}"; then
-    ok "API reports libtorrent 1.2.20"
+if grep -Eq "\"libtorrent\":\"${lt_re}(\\.[0-9]+)?\"" <<<"${build_info}"; then
+    ok "API reports libtorrent ${LT_VERSION}"
 else
-    bad "API reports libtorrent 1.2.20 (got: ${build_info})"
+    bad "API reports libtorrent ${LT_VERSION} (got: ${build_info})"
 fi
 
 # --------------------------------------------------------------------------

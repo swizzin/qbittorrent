@@ -100,15 +100,17 @@ was applied and that the qBittorrent tree is still the pristine tag.
 
 ## Updating
 
-qBittorrent: change `QBT_TAG` in the Dockerfile (for example
-`release-5.3.1`) and rebuild. Nothing else has to change — there are no
-per-version qBittorrent patch files to move, and the script's own patch
-directory for the new tag is handled by the same comment-only marker.
+qBittorrent: change `QBT_VERSION` at the top of the Dockerfile (for example
+`5.3.1`) and push. That is the whole change. The image tag, the OCI labels,
+`BUILD-INFO` and both check scripts read the version from the Dockerfile through
+`hack/versions.sh`, and there are no per-version qBittorrent patch files.
 
-libtorrent: change `LT_TAG` and move `patches/libtorrent/<version>/patch` to
-the new version, checking that it still applies. OpenSSL: change `OPENSSL_TAG`.
-If a new qBittorrent needs a newer Qt or Boost, the pinned build script already
-selects those by tag; nothing in this repository pins them.
+libtorrent: change `LT_VERSION`, then regenerate
+`patches/libtorrent/<version>/patch` from that tag's `src/settings_pack.cpp`
+(see [patches/libtorrent/README.md](patches/libtorrent/README.md)) and check it
+applies. OpenSSL: change `OPENSSL_TAG`. Qt and Boost are chosen by the pinned
+build script; moving to a newer build script means updating its commit and
+sha256 together.
 
 ## Building locally
 

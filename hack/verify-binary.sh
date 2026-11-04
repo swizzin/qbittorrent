@@ -24,6 +24,8 @@ for tool in docker readelf objdump file grep; do
 done
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+eval "$("${repo_root}/hack/versions.sh")"
+qbt_re=${QBT_VERSION//./\\.}
 
 tmpdir=$(mktemp -d)
 container="qbt-verify-$$"
@@ -61,17 +63,17 @@ printf 'image: %s\n\n' "${image}"
 # --------------------------------------------------------------------------
 version_output=$(docker run --rm --entrypoint /app/qbittorrent-nox "${image}" --version)
 printf 'binary says: %s\n' "${version_output}"
-if grep -Eq 'qBittorrent v?5\.3\.0' <<<"${version_output}"; then
-    ok "qbittorrent-nox --version reports v5.3.0"
+if grep -Eq "qBittorrent v?${qbt_re}([^0-9.]|\$)" <<<"${version_output}"; then
+    ok "qbittorrent-nox --version reports v${QBT_VERSION}"
 else
-    bad "qbittorrent-nox --version reports v5.3.0 (got: ${version_output})"
+    bad "qbittorrent-nox --version reports v${QBT_VERSION} (got: ${version_output})"
 fi
 
 lt_versions=$(grep -ao 'libtorrent/[0-9][0-9.]*' "${bin}" | sort -u || true)
-if [[ ${lt_versions} == 'libtorrent/1.2.20' || ${lt_versions} == 'libtorrent/1.2.20.0' ]]; then
-    ok "binary carries libtorrent 1.2.20 (${lt_versions})"
+if [[ ${lt_versions} == "libtorrent/${LT_VERSION}" || ${lt_versions} == "libtorrent/${LT_VERSION}.0" ]]; then
+    ok "binary carries libtorrent ${LT_VERSION} (${lt_versions})"
 else
-    bad "binary carries libtorrent 1.2.20 (found: ${lt_versions:-nothing})"
+    bad "binary carries libtorrent ${LT_VERSION} (found: ${lt_versions:-nothing})"
 fi
 
 # --------------------------------------------------------------------------
@@ -92,11 +94,11 @@ fi
 # BMI2 (shlx/shrx/sarx/mulx/rorx) and ymm (VEX/AVX) instructions do not exist
 # on baseline x86-64.
 # --------------------------------------------------------------------------
-if readelf -p .GCC.command.line "${bin}" 2>/dev/null | grep -q -- '-march=znver3'; then
-    ok "compiler flags recorded in the binary contain -march=znver3"
-    readelf -p .GCC.command.line "${bin}" | grep -o -- '-march=znver3' | head -n1 | sed 's/^/      /'
+if readelf -p .GCC.command.line "${bin}" 2>/dev/null | grep -qF -- "-march=${MARCH}"; then
+    ok "compiler flags recorded in the binary contain -march=${MARCH}"
+    readelf -p .GCC.command.line "${bin}" | grep -oF -- "-march=${MARCH}" | head -n1 | sed 's/^/      /'
 else
-    bad "compiler flags recorded in the binary contain -march=znver3"
+    bad "compiler flags recorded in the binary contain -march=${MARCH}"
 fi
 
 objdump -d --no-show-raw-insn "${bin}" >"${tmpdir}/disasm.txt"
@@ -126,15 +128,15 @@ fi
 # --------------------------------------------------------------------------
 # provenance: the patches in this repository are the patches that were built
 # --------------------------------------------------------------------------
-lt_patch_sha=$(sha256sum "${repo_root}/patches/libtorrent/1.2.20/patch" | cut -d' ' -f1)
+lt_patch_sha=$(sha256sum "${repo_root}/patches/libtorrent/${LT_VERSION}/patch" | cut -d' ' -f1)
 expect "BUILD-INFO records this repo's libtorrent patch" \
     grep -qx "libtorrent_patch_sha256=${lt_patch_sha}" "${tmpdir}/BUILD-INFO"
 expect "BUILD-INFO records that qBittorrent has no patches" \
     grep -qx 'qbittorrent_patches=none' "${tmpdir}/BUILD-INFO"
-expect "BUILD-INFO records march=znver3" \
-    grep -qx 'march=znver3' "${tmpdir}/BUILD-INFO"
-expect "BUILD-INFO records libtorrent=1.2.20" \
-    grep -qx 'libtorrent=1.2.20' "${tmpdir}/BUILD-INFO"
+expect "BUILD-INFO records march=${MARCH}" \
+    grep -qx "march=${MARCH}" "${tmpdir}/BUILD-INFO"
+expect "BUILD-INFO records libtorrent=${LT_VERSION}" \
+    grep -qx "libtorrent=${LT_VERSION}" "${tmpdir}/BUILD-INFO"
 
 # --------------------------------------------------------------------------
 # image layout and configuration
@@ -197,7 +199,7 @@ check_label() {
 }
 check_label org.opencontainers.image.source https://github.com/swizzin/qbittorrent
 check_label org.opencontainers.image.licenses 'Apache-2.0 AND GPL-2.0-or-later'
-check_label org.opencontainers.image.version 5.3.0
+check_label org.opencontainers.image.version "${QBT_VERSION}"
 
 unwanted=$(docker run --rm --entrypoint /bin/sh "${image}" -c 'command -v python3 curl jq vim 2>/dev/null || true')
 if [[ -z ${unwanted} ]]; then
