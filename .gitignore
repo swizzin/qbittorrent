@@ -1,0 +1,3 @@
+qbt-build/
+*.log
+/out/

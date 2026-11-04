@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# qbt-unpack — extract scene archives after a torrent finishes.
+#
+# usage   : qbt-unpack.sh "<content path>"        ("%F" from qBittorrent)
+# install : chmod 755, put it somewhere the qBittorrent user can reach (no root
+#           needed: ~/bin/qbt-unpack), then Options > Downloads >
+#           "Run external program on torrent completion":
+#               /home/<user>/bin/qbt-unpack "%F"
+#
+# Extracts into the torrent's own folder so the files stay attached to the
+# torrent (loose files dropped in %D are invisible to Sonarr/Radarr imports).
+# Always exits 0: a bad archive must not look like a qBittorrent failure.
+
+set -uo pipefail
+
+src=${1-}
+
+# Single-file torrents (%F is the media file itself) and missing paths: nothing
+# to unpack, and no reason to hand unrar a path that ends in ".mkv/*.rar".
+[[ -n $src && -d $src ]] || exit 0
+cd -- "$src" 2>/dev/null || exit 0
+
+shopt -s nullglob nocaseglob globstar dotglob
+
+log() { printf 'qbt-unpack: %s\n' "$*" >&2; }
+
+status=0
+
+# ---- rar / multi-volume rar sets -------------------------------------------
+# Only the first volume is opened; .r00/.r01 and .part2+ are pulled in by unrar.
+for arc in **/*.rar; do
+    if [[ ${arc,,} =~ \.part([0-9]+)\.rar$ ]] && (( BASH_REMATCH[1] > 1 )); then
+        continue
+    fi
+    if unrar x -o+ -y -p- -idq -- "$arc" ./ </dev/null; then
+        log "extracted $arc"
+    else
+        log "unrar failed on $arc (rc=$?)"
+        status=1
+    fi
+done
+
+# ---- zip -------------------------------------------------------------------
+for arc in **/*.zip; do
+    if unzip -o -q -- "$arc" -d ./ </dev/null; then
+        log "extracted $arc"
+    else
+        log "unzip failed on $arc (rc=$?)"
+        status=1
+    fi
+done
+
+[[ $status -eq 0 ]] || log "finished with errors in $src"
+exit 0
