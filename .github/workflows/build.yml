@@ -3,7 +3,7 @@ name: build
 on:
   push:
     branches:
-      - main
+      - '**'
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
@@ -21,17 +21,26 @@ env:
 
 jobs:
   image:
-    name: build, verify, push (${{ matrix.allocator }})
-    # Native znver3 build: the image is compiled with -march=znver3 and is not
-    # emulated, so the runner has to be a Zen 3 (or newer) machine.
+    name: build, verify, push (${{ matrix.name }})
+    # Every variant builds on the one amd64 runner. The baseline (x86-64-v2)
+    # and znver3 amd64 builds are native; the arm64 variants are cross-compiled
+    # by the build script (no qemu needed to compile) and need qemu binfmt only
+    # to assemble the arm64 runtime image and run the arm64 smoke test.
     runs-on: [self-hosted, linux, x64, znver3]
-    # One runner pod at a time: both matrix jobs target the same shared box.
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
-        allocator: [musl, mimalloc]
-    # A capped runner (BUILD_JOBS=6) takes roughly twice the 16-job time.
+        include:
+          # base profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
+          - { name: base-amd64,          profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true }
+          - { name: base-arm64,          profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true }
+          # 10g profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
+          - { name: 10g-amd64,           profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true }
+          - { name: 10g-arm64,           profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true }
+          # 10g profile, znver3 (amd64 only; the existing A/B line, unchanged)
+          - { name: 10g-znver3-musl,     profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false }
+          - { name: 10g-znver3-mimalloc, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false }
     timeout-minutes: 240
     steps:
       - name: Checkout
@@ -40,10 +49,28 @@ jobs:
       - name: Set up buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
+      # The arm64 build is a cross-compile, but assembling the arm64 runtime
+      # image (apk add) and the arm64 smoke test both execute arm64 code, so
+      # qemu binfmt must be registered with the builder. The next step verifies
+      # it so a missing binfmt fails here with a clear message, not mid-build.
+      - name: Set up QEMU for arm64
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Verify QEMU binfmt
+        if: matrix.arch == 'arm64'
+        run: |
+          out=$(docker run --rm --platform linux/arm64 --entrypoint uname alpine:3.24 -m 2>&1 || true)
+          if [ "${out}" != "aarch64" ]; then
+            printf 'qemu binfmt is not usable for arm64 on this runner; cannot assemble or smoke the arm64 image (got: %s)\n' "${out}" >&2
+            exit 1
+          fi
+          printf 'qemu binfmt for arm64 is working (%s)\n' "${out}"
+
       - name: Host tools for the binary checks
         run: |
           missing=()
-          for tool in readelf objdump file; do
+          for tool in readelf objdump file strings; do
             command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
           done
           if (( ${#missing[@]} )); then
@@ -52,21 +79,40 @@ jobs:
           fi
 
       - name: Read versions from the Dockerfile
-        run: hack/versions.sh "${{ matrix.allocator }}" >> "${GITHUB_ENV}"
+        run: hack/versions.sh "${{ matrix.allocator }}" "${{ matrix.profile }}" "${{ matrix.march }}" "${{ matrix.arch }}" >> "${GITHUB_ENV}"
+
+      # The moving tag is per-arch for the multi-arch variants (the manifest is
+      # assembled from those), and direct for the single-arch znver3 line. The
+      # immutable sha tag is suffixed per variant so it is unique.
+      - name: Compute the push tags
+        run: |
+          if [ "${{ matrix.multi }}" = "true" ]; then
+            PUSH_TAG="${IMAGE_TAG}-${ARCH}"
+            SHA_TAG="sha-${GITHUB_SHA::12}-${PROFILE}-${ARCH}"
+          else
+            PUSH_TAG="${IMAGE_TAG}"
+            SHA_TAG="sha-${GITHUB_SHA::12}"
+            if [ "${ALLOCATOR}" = "mimalloc" ]; then SHA_TAG="${SHA_TAG}-mimalloc"; fi
+          fi
+          {
+            echo "PUSH_TAG=${PUSH_TAG}"
+            echo "SHA_TAG=${SHA_TAG}"
+          } >> "${GITHUB_ENV}"
 
       # BUILD_JOBS comes from the runner's environment when it sets one, so a
       # runner on a shared host can cap compile parallelism without a commit.
-      # ALLOCATOR is the one axis of the A/B pair; the sha tag is suffixed per
-      # variant so the immutable tag is unique too.
+      # PROFILE/MARCH/ALLOCATOR are the build axes.
       - name: Build
         run: |
           docker buildx build \
             --load \
+            --platform "${{ matrix.platform }}" \
             --progress=plain \
             --build-arg BUILD_JOBS="${BUILD_JOBS:-16}" \
             --build-arg ALLOCATOR="${{ matrix.allocator }}" \
+            --build-arg PROFILE="${{ matrix.profile }}" \
+            --build-arg MARCH="${{ matrix.march }}" \
             --tag "${IMAGE}:${IMAGE_TAG}" \
-            --tag "${IMAGE}:sha-${GITHUB_SHA::12}${{ matrix.allocator == 'mimalloc' && '-mimalloc' || '' }}" \
             .
 
       - name: Verify binary
@@ -76,6 +122,7 @@ jobs:
         run: hack/smoke.sh "${IMAGE}:${IMAGE_TAG}"
 
       - name: Log in to GHCR
+        if: github.ref == 'refs/heads/main'
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           registry: ghcr.io
@@ -83,6 +130,59 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push
+        if: github.ref == 'refs/heads/main'
         run: |
-          docker push "${IMAGE}:${IMAGE_TAG}"
-          docker push "${IMAGE}:sha-${GITHUB_SHA::12}${{ matrix.allocator == 'mimalloc' && '-mimalloc' || '' }}"
+          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${PUSH_TAG}"
+          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${SHA_TAG}"
+          docker push "${IMAGE}:${PUSH_TAG}"
+          docker push "${IMAGE}:${SHA_TAG}"
+
+  manifest:
+    name: assemble multi-arch manifests
+    needs: image
+    runs-on: [self-hosted, linux, x64, znver3]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute manifest tags
+        run: |
+          eval "$(hack/versions.sh musl base x86-64-v2 amd64)"
+          BASE_TAG="${IMAGE_TAG}"
+          eval "$(hack/versions.sh musl 10g x86-64-v2 amd64)"
+          TENG_TAG="${IMAGE_TAG}"
+          SHA="${GITHUB_SHA::12}"
+          {
+            echo "BASE_TAG=${BASE_TAG}"
+            echo "TENG_TAG=${TENG_TAG}"
+            echo "SHA=${SHA}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Assemble manifests
+        run: |
+          set -eux
+          # Moving multi-arch tags (base and 10g baseline) over amd64 + arm64.
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${BASE_TAG}" \
+            "${IMAGE}:${BASE_TAG}-amd64" "${IMAGE}:${BASE_TAG}-arm64"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${TENG_TAG}" \
+            "${IMAGE}:${TENG_TAG}-amd64" "${IMAGE}:${TENG_TAG}-arm64"
+          # Immutable per-commit multi-arch manifests.
+          docker buildx imagetools create \
+            --tag "${IMAGE}:sha-${SHA}-base" \
+            "${IMAGE}:sha-${SHA}-base-amd64" "${IMAGE}:sha-${SHA}-base-arm64"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:sha-${SHA}-10g" \
+            "${IMAGE}:sha-${SHA}-10g-amd64" "${IMAGE}:sha-${SHA}-10g-arm64"
