@@ -1,13 +1,18 @@
 # syntax=docker/dockerfile:1.7
 #
-# qBittorrent on libtorrent 1.2 (versions below), statically linked against musl and
-# compiled for the znver3 microarchitecture.
+# qBittorrent on libtorrent 1.2 (versions below), statically linked against musl.
+#
+# The image is built in two compiled libtorrent profiles (base and 10g) across
+# two targets: amd64 (baseline x86-64-v2 or znver3) and arm64 (aarch64). The
+# allocator is a further axis: musl (the default) or, for the 10g-znver3 amd64
+# line only, mimalloc.
 #
 # The build is done by userdocs/qbittorrent-nox-static, pinned to a commit and
 # to the sha256 of the script itself. Patches are taken from this repository
 # only; they are copied into the script's patch tree before the build so its
 # "local patches" path is used and nothing is fetched from the network while
-# compiling.
+# compiling. arm64 is cross-compiled on the amd64 builder (the script's
+# -ma aarch64); no qemu is needed to compile.
 
 # The versions. Updating qBittorrent is a change to QBT_VERSION and nothing else.
 ARG QBT_VERSION=5.3.0
@@ -15,10 +20,17 @@ ARG LT_VERSION=1.2.20
 
 # The allocator is the one axis of the A/B image pair. musl (the default) keeps
 # musl's own malloc; mimalloc links mimalloc v3.5.4 as a statically linked
-# drop-in replacement. Everything else (versions, the 10g libtorrent patch, the
-# -march target, the runtime) is identical across the two variants. Any other
-# value fails the build.
+# drop-in replacement. Everything else (versions, the libtorrent patch, the
+# -march target, the runtime) is identical across the two variants. mimalloc is
+# only valid for the 10g-znver3 amd64 line. Any other value fails the build.
 ARG ALLOCATOR=musl
+
+# The compiled libtorrent profile. base and 10g differ only in the two
+# compile-only defaults that scale with the box (send_not_sent_low_watermark and
+# max_peer_recv_buffer_size); the other four tunings are shared. The runtime
+# profiles (light/1g/10g) are qBittorrent.conf presets, not build axes, so they
+# are not image tags here. Any other value fails the build.
+ARG PROFILE=10g
 
 ARG ALPINE_IMAGE=docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 ARG UNRAR_IMAGE=ghcr.io/linuxserver/unrar@sha256:48c0ce2609bb3c35764956bbd9395e95b177421e3c74b3628c3676029f24f2e0
@@ -26,15 +38,29 @@ ARG UNRAR_IMAGE=ghcr.io/linuxserver/unrar@sha256:48c0ce2609bb3c35764956bbd9395e9
 ###############################################################################
 # build
 ###############################################################################
-FROM ${ALPINE_IMAGE} AS build
+# The build stage always runs on the build platform (amd64 on the runner), even
+# when the image is assembled for arm64: the script cross-compiles the arm64
+# binary rather than running an emulated build. The runtime stage below is the
+# target platform.
+FROM --platform=${BUILDPLATFORM} ${ALPINE_IMAGE} AS build
 
-# Microarchitecture target. This is the single knob for a baseline build:
+# buildx provides these platform ARGs; the defaults keep a plain `docker build`
+# (legacy builder) on amd64 working.
+ARG BUILDPLATFORM=linux/amd64
+ARG TARGETPLATFORM=linux/amd64
+ARG TARGETARCH=amd64
+
+# Microarchitecture target for amd64. This is the single knob for a baseline
+# build:
 #   docker buildx build --build-arg MARCH=x86-64-v2 ...
+# It is ignored for arm64, where the aarch64-linux-musl cross toolchain targets
+# the armv8-a baseline.
 ARG MARCH=znver3
 ARG BUILD_JOBS=16
 ARG QBT_VERSION
 ARG LT_VERSION
 ARG ALLOCATOR
+ARG PROFILE
 ARG QBT_TAG=release-${QBT_VERSION}
 ARG LT_TAG=v${LT_VERSION}
 
@@ -73,12 +99,22 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 WORKDIR /build
 
-# The allocator is the only thing the two variants differ on; a bad value is a
-# build error rather than a silent fallback.
+# A bad value for any build axis is a build error rather than a silent fallback.
 RUN case "${ALLOCATOR}" in \
         musl|mimalloc) ;; \
         *) printf 'ALLOCATOR must be "musl" or "mimalloc", got: %s\n' "${ALLOCATOR}" >&2; exit 1;; \
-    esac
+    esac; \
+    case "${PROFILE}" in \
+        base|10g) ;; \
+        *) printf 'PROFILE must be "base" or "10g", got: %s\n' "${PROFILE}" >&2; exit 1;; \
+    esac; \
+    case "${TARGETARCH}" in \
+        amd64|arm64) ;; \
+        *) printf 'TARGETARCH must be "amd64" or "arm64", got: %s\n' "${TARGETARCH}" >&2; exit 1;; \
+    esac; \
+    if [ "${ALLOCATOR}" = "mimalloc" ] && { [ "${PROFILE}" != "10g" ] || [ "${MARCH}" != "znver3" ] || [ "${TARGETARCH}" != "amd64" ]; }; then \
+        printf 'mimalloc is only built for the 10g-znver3 amd64 line\n' >&2; exit 1; \
+    fi
 
 ADD --checksum=sha256:${QBT_STATIC_SCRIPT_SHA256} \
     ${QBT_STATIC_SCRIPT_URL} \
@@ -101,17 +137,30 @@ RUN set -eux; \
     test -f /build/cache/iconv/configure
 
 # 1. bootstrap: creates qbt-build/ with the patch directories for the pinned
-#    tags and installs the host build dependencies.
-# 2. install our libtorrent patch. A local patch file takes priority over the
-#    script's remote patch repository, so the build is reproducible.
+#    tags, installs the host build dependencies, and (for arm64) downloads the
+#    cross toolchain and the prebuilt Qt host tools. The -ma flag selects the
+#    script's cross-compilation; qbt_host_deps=yes pulls the Qt host tools from
+#    userdocs/qbt-host-deps so no qemu is needed to compile.
+# 2. install the libtorrent patch for the selected profile. A local patch file
+#    takes priority over the script's remote patch repository, so the build is
+#    reproducible.
 # 3. qBittorrent is built from its upstream tag with no patches. The script
 #    falls back to fetching patches from its own repository for a tag it has no
 #    local patch for, so the version's patch directory gets a comment-only
 #    "url" file: that marks the module as locally patched, and because every
 #    line is a comment nothing is downloaded and nothing is applied.
 RUN set -eux; \
-    bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bs-a; \
-    install -D -m 0644 "/build/patches/libtorrent/${LT_VERSION}/patch" "/build/qbt-build/patches/libtorrent/${LT_VERSION}/patch"; \
+    cross=(); \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+        cross=(-ma aarch64); \
+        export qbt_host_deps=yes qbt_with_qemu=no; \
+    fi; \
+    case "${PROFILE}" in \
+        base) patch_src="base.patch" ;; \
+        10g) patch_src="patch" ;; \
+    esac; \
+    bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bs-a "${cross[@]}"; \
+    install -D -m 0644 "/build/patches/libtorrent/${LT_VERSION}/${patch_src}" "/build/qbt-build/patches/libtorrent/${LT_VERSION}/patch"; \
     test -s "/build/qbt-build/patches/libtorrent/${LT_VERSION}/patch"; \
     printf '%s\n' \
         '# qBittorrent is built from its upstream release tag with no patches.' \
@@ -152,10 +201,13 @@ RUN set -eux; \
 
 # The script appends CFLAGS/CXXFLAGS/LDFLAGS from the environment to its own
 # flags, so this is how the target is set for every module it builds (zlib,
-# openssl, boost, Qt, libtorrent, qBittorrent). For the mimalloc variant the
-# LDFLAGS also carry mimalloc.o, which the script appends at the end of the
-# qbittorrent link line; the driver links libc.a after that, so musl's own
-# malloc objects are never pulled in and the override is clean (no -z muldefs).
+# openssl, boost, Qt, libtorrent, qBittorrent). amd64 carries -march/-mtune for
+# the chosen microarchitecture; arm64 carries -march=armv8-a so the recorded
+# flags name the baseline AArch64 target the cross toolchain builds for. For the
+# mimalloc variant the LDFLAGS also carry mimalloc.o, which the script appends
+# at the end of the qbittorrent link line; the driver links libc.a after that,
+# so musl's own malloc objects are never pulled in and the override is clean
+# (no -z muldefs).
 #
 # -frecord-gcc-switches records the compiler flags in .GCC.command.line, which
 # survives -s/LTO and is what hack/verify-binary.sh reads back out of the
@@ -169,14 +221,21 @@ RUN set -eux; \
 # failed. On failure only the tail of the build log and of the per-module logs
 # the script writes are printed.
 RUN set -eu; \
-    ldflags="-march=${MARCH}"; \
-    if [ "${ALLOCATOR}" = "mimalloc" ]; then \
-        ldflags="${ldflags} /build/mimalloc/build/mimalloc.o"; \
+    cross=(); \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+        cross=(-ma aarch64); \
+        export qbt_host_deps=yes qbt_with_qemu=no; \
+        flags="-march=armv8-a -frecord-gcc-switches"; \
+        ldflags=""; \
+    else \
+        flags="-march=${MARCH} -mtune=${MARCH} -frecord-gcc-switches"; \
+        ldflags="-march=${MARCH}"; \
+        if [ "${ALLOCATOR}" = "mimalloc" ]; then \
+            ldflags="${ldflags} /build/mimalloc/build/mimalloc.o"; \
+        fi; \
     fi; \
-    export CFLAGS="-march=${MARCH} -mtune=${MARCH} -frecord-gcc-switches" \
-           CXXFLAGS="-march=${MARCH} -mtune=${MARCH} -frecord-gcc-switches" \
-           LDFLAGS="${ldflags}"; \
-    if ! bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -cd /build/cache -n all > /build/build.log 2>&1; then \
+    export CFLAGS="${flags}" CXXFLAGS="${flags}" LDFLAGS="${ldflags}"; \
+    if ! bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -cd /build/cache -n all "${cross[@]}" > /build/build.log 2>&1; then \
         echo "=== build failed: tail -n 200 of /build/build.log ==="; \
         tail -n 200 /build/build.log; \
         for log in /build/qbt-build/logs/*.log; do \
@@ -192,6 +251,9 @@ RUN set -eu; \
 # patched source is what got compiled, unless qBittorrent was left unpatched,
 # and unless the compiler was really invoked with the target flags. The script
 # warns and carries on when a patch fails, so this step is the actual gate.
+# The two values that scale with the box differ by profile; the other four
+# tunings are shared. The arm64 binary cannot run on the amd64 build stage, so
+# its version is read from the binary instead of executed.
 RUN set -eux; \
     bin=/build/qbt-build/completed/qbittorrent-nox; \
     test -x "${bin}"; \
@@ -201,36 +263,52 @@ RUN set -eux; \
     command -v ninja; \
     lt_src=$(echo /build/qbt-build/libtorrent-rasterbar-*/src); \
     qbt_src=$(echo /build/qbt-build/qBittorrent-*/src); \
+    case "${PROFILE}" in \
+        base) watermark='SET(send_not_sent_low_watermark, 524288, nullptr)'; recvbuf='SET(max_peer_recv_buffer_size, 2 * 1024 * 1024, nullptr)' ;; \
+        10g) watermark='SET(send_not_sent_low_watermark, 1024 * 1024, nullptr)'; recvbuf='SET(max_peer_recv_buffer_size, 4 * 1024 * 1024, nullptr)' ;; \
+    esac; \
+    if [ "${TARGETARCH}" = "arm64" ]; then march="armv8-a"; else march="${MARCH}"; fi; \
     grep -qF 'SET(request_timeout, 20, nullptr)' "${lt_src}/settings_pack.cpp"; \
     grep -qF 'SET(whole_pieces_threshold, 10, nullptr)' "${lt_src}/settings_pack.cpp"; \
-    grep -qF 'SET(max_peer_recv_buffer_size, 4 * 1024 * 1024, nullptr)' "${lt_src}/settings_pack.cpp"; \
+    grep -qF "${recvbuf}" "${lt_src}/settings_pack.cpp"; \
     grep -qF 'SET(torrent_connect_boost, 50, nullptr)' "${lt_src}/settings_pack.cpp"; \
     grep -qF 'SET(predictive_piece_announce, 10, nullptr)' "${lt_src}/settings_pack.cpp"; \
-    grep -qF 'SET(send_not_sent_low_watermark, 1024 * 1024, nullptr)' "${lt_src}/settings_pack.cpp"; \
-    grep -qF -- "-march=${MARCH}" /build/qbt-build/libtorrent-rasterbar-*/build/CMakeCache.txt; \
-    grep -qF -- "-march=${MARCH}" /build/qbt-build/qBittorrent-*/build/CMakeCache.txt; \
+    grep -qF "${watermark}" "${lt_src}/settings_pack.cpp"; \
+    grep -qF -- "-march=${march}" /build/qbt-build/libtorrent-rasterbar-*/build/CMakeCache.txt; \
+    grep -qF -- "-march=${march}" /build/qbt-build/qBittorrent-*/build/CMakeCache.txt; \
     ninja -C "$(echo /build/qbt-build/libtorrent-rasterbar-*/build)" -t commands > /build/ninja-libtorrent.txt; \
-    awk -v m="-march=${MARCH}" 'index($0, "settings_pack.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-libtorrent.txt; \
+    awk -v m="-march=${march}" 'index($0, "settings_pack.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-libtorrent.txt; \
     ninja -C "$(echo /build/qbt-build/qBittorrent-*/build)" -t commands > /build/ninja-qbittorrent.txt; \
-    awk -v m="-march=${MARCH}" 'index($0, "sessionimpl.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-qbittorrent.txt; \
-    "${bin}" --version > /build/version.txt; \
-    grep -qF "v${QBT_VERSION}" /build/version.txt; \
+    awk -v m="-march=${march}" 'index($0, "sessionimpl.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-qbittorrent.txt; \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+        grep -qaF "${QBT_VERSION}" "${bin}"; \
+    else \
+        "${bin}" --version > /build/version.txt; \
+        grep -qF "v${QBT_VERSION}" /build/version.txt; \
+    fi; \
     if [ "${ALLOCATOR}" = "mimalloc" ]; then \
         grep -qF 'mimalloc' "${bin}"; \
-        readelf -p .GCC.command.line "${bin}" | grep -qF -- "-march=${MARCH}"; \
+        readelf -p .GCC.command.line "${bin}" | grep -qF -- "-march=${march}"; \
     fi
 
 # Provenance for the runtime image: what was built, with which target, the
-# allocator, and the exact patch consumed from this repository.
+# profile, the allocator, and the exact patch consumed from this repository.
 RUN set -eux; \
+    case "${PROFILE}" in \
+        base) patch_src="base.patch" ;; \
+        10g) patch_src="patch" ;; \
+    esac; \
+    if [ "${TARGETARCH}" = "arm64" ]; then march="armv8-a"; else march="${MARCH}"; fi; \
     { \
         echo "qbittorrent=${QBT_VERSION}"; \
         echo "qbittorrent_patches=none"; \
         echo "libtorrent=${LT_VERSION}"; \
-        echo "march=${MARCH}"; \
+        echo "profile=${PROFILE}"; \
+        echo "arch=${TARGETARCH}"; \
+        echo "march=${march}"; \
         echo "build_jobs=${BUILD_JOBS}"; \
         echo "allocator=${ALLOCATOR}"; \
-        echo "libtorrent_patch_sha256=$(sha256sum "/build/patches/libtorrent/${LT_VERSION}/patch" | cut -d' ' -f1)"; \
+        echo "libtorrent_patch_sha256=$(sha256sum "/build/patches/libtorrent/${LT_VERSION}/${patch_src}" | cut -d' ' -f1)"; \
         echo "build_script_sha256=${QBT_STATIC_SCRIPT_SHA256}"; \
         if [ "${ALLOCATOR}" = "mimalloc" ]; then \
             echo "mimalloc_tag=${MIMALLOC_TAG}"; \
@@ -242,19 +320,21 @@ RUN set -eux; \
 ###############################################################################
 # runtime
 ###############################################################################
-FROM ${UNRAR_IMAGE} AS unrar
+FROM --platform=${TARGETPLATFORM} ${UNRAR_IMAGE} AS unrar
 
-FROM ${ALPINE_IMAGE} AS runtime
+FROM --platform=${TARGETPLATFORM} ${ALPINE_IMAGE} AS runtime
 
+ARG TARGETPLATFORM=linux/amd64
 ARG QBT_VERSION
 ARG LT_VERSION
 ARG MARCH=znver3
+ARG PROFILE=10g
 ARG ALLOCATOR=musl
 
 LABEL org.opencontainers.image.source="https://github.com/swizzin/qbittorrent" \
       org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-or-later" \
       org.opencontainers.image.version="${QBT_VERSION}" \
-      org.opencontainers.image.description="qBittorrent ${QBT_VERSION} on libtorrent ${LT_VERSION}, static musl, 10g libtorrent defaults, compiled for ${MARCH}, ${ALLOCATOR} malloc"
+      org.opencontainers.image.description="qBittorrent ${QBT_VERSION} on libtorrent ${LT_VERSION}, static musl, ${PROFILE} libtorrent defaults, compiled for ${MARCH}, ${ALLOCATOR} malloc"
 
 RUN apk add --no-cache catatonit tzdata ca-certificates bash 7zip
 
