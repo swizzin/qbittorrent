@@ -4,9 +4,14 @@
 #   hack/verify-binary.sh <image>
 #
 # Checks the binary itself (version strings, no profiling/allocator artefacts,
-# the actual microarchitecture it was compiled for, static linkage), the
-# provenance file, and the image configuration this repository promises.
-# Exits non-zero on any failure and prints PASS at the end.
+# the actual architecture and microarchitecture it was compiled for, static
+# linkage), the provenance file, and the image configuration this repository
+# promises. Exits non-zero on any failure and prints PASS at the end.
+#
+# The image identifies its own build axes through /app/BUILD-INFO (profile,
+# arch, march, allocator). amd64 binaries are executed; an arm64 binary cannot
+# run on an amd64 host without qemu binfmt, so set QBT_VERIFY_RUN=0 to fall
+# back to static inspection for a foreign-arch image.
 
 set -euo pipefail
 
@@ -16,7 +21,7 @@ if [[ -z ${image} ]]; then
     exit 2
 fi
 
-for tool in docker readelf objdump file grep; do
+for tool in docker readelf objdump file grep strings; do
     command -v "${tool}" >/dev/null 2>&1 || {
         printf 'verify-binary: host tool not found: %s\n' "${tool}" >&2
         exit 2
@@ -38,6 +43,7 @@ trap cleanup EXIT
 failures=0
 ok() { printf 'ok    %s\n' "$*"; }
 bad() { printf 'FAIL  %s\n' "$*" >&2; failures=$((failures + 1)); }
+skip() { printf 'skip  %s\n' "$*"; }
 
 # expect <description> <command...>
 expect() {
@@ -56,24 +62,46 @@ docker cp "${container}:/app/qbittorrent-nox" "${tmpdir}/qbittorrent-nox" >/dev/
 docker cp "${container}:/app/BUILD-INFO" "${tmpdir}/BUILD-INFO" >/dev/null
 bin="${tmpdir}/qbittorrent-nox"
 
-# The allocator this image was built with comes from BUILD-INFO (older images
-# predate the field and are therefore the musl variant).
+# The image identifies its own build axes through BUILD-INFO. Older images
+# predate the profile/arch fields and are therefore the 10g amd64 variant; the
+# allocator field predates everything and defaults to musl when absent.
 allocator=$(sed -n 's/^allocator=//p' "${tmpdir}/BUILD-INFO")
 allocator="${allocator:-musl}"
+profile=$(sed -n 's/^profile=//p' "${tmpdir}/BUILD-INFO")
+profile="${profile:-10g}"
+arch=$(sed -n 's/^arch=//p' "${tmpdir}/BUILD-INFO")
+arch="${arch:-amd64}"
+march=$(sed -n 's/^march=//p' "${tmpdir}/BUILD-INFO")
+march="${march:-znver3}"
 case "${allocator}" in
     musl|mimalloc) ;;
     *) printf 'verify-binary: unknown allocator %q in BUILD-INFO\n' "${allocator}" >&2; exit 2 ;;
 esac
-printf 'allocator: %s\n\n' "${allocator}"
+case "${profile}" in
+    base|10g) ;;
+    *) printf 'verify-binary: unknown profile %q in BUILD-INFO\n' "${profile}" >&2; exit 2 ;;
+esac
+printf 'profile: %s  arch: %s  march: %s  allocator: %s\n\n' "${profile}" "${arch}" "${march}" "${allocator}"
+
+# Whether the binary can be executed here. amd64 runs natively; arm64 needs
+# qemu binfmt on this host. QBT_VERIFY_RUN=0 forces static-only checks.
+can_run=1
+if [[ ${arch} == "arm64" && ${QBT_VERIFY_RUN:-1} == 0 ]]; then
+    can_run=0
+fi
 
 printf 'image: %s\n\n' "${image}"
 
 # --------------------------------------------------------------------------
 # version strings
 # --------------------------------------------------------------------------
-version_output=$(docker run --rm --entrypoint /app/qbittorrent-nox "${image}" --version)
+if [[ ${can_run} == 1 ]]; then
+    version_output=$(docker run --rm --entrypoint /app/qbittorrent-nox "${image}" --version 2>/dev/null || true)
+else
+    version_output=$(strings "${bin}" | grep -aoE 'qBittorrent v?[0-9]+(\.[0-9]+)+' | head -n1 || true)
+fi
 printf 'binary says: %s\n' "${version_output}"
-if grep -Eq "qBittorrent v?${qbt_re}([^0-9.]|\$)" <<<"${version_output}"; then
+if grep -Eq "qBittorrent v?${qbt_re}([^0-9.]|$)" <<<"${version_output}"; then
     ok "qbittorrent-nox --version reports v${QBT_VERSION}"
 else
     bad "qbittorrent-nox --version reports v${QBT_VERSION} (got: ${version_output})"
@@ -127,34 +155,46 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# microarchitecture
+# architecture and microarchitecture
 #
 # -frecord-gcc-switches records the compiler flags in .GCC.command.line, which
 # survives -s and LTO, so the exact -march value can be read back out of the
-# stripped binary. The instruction census then shows the flag was not inert:
-# BMI2 (shlx/shrx/sarx/mulx/rorx) and ymm (VEX/AVX) instructions do not exist
-# on baseline x86-64.
+# stripped binary. The ELF machine field asserts the architecture; for amd64 an
+# instruction census then shows the -march flag was not inert: BMI2 (shlx/shrx/
+# sarx/mulx/rorx) and ymm (VEX/AVX) instructions do not exist on baseline
+# x86-64, and must be absent from an x86-64-v2 build.
 # --------------------------------------------------------------------------
-if readelf -p .GCC.command.line "${bin}" 2>/dev/null | grep -qF -- "-march=${MARCH}"; then
-    ok "compiler flags recorded in the binary contain -march=${MARCH}"
-    readelf -p .GCC.command.line "${bin}" | grep -oF -- "-march=${MARCH}" | head -n1 | sed 's/^/      /'
+machine=$(readelf -h "${bin}" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
+printf '      ELF machine: %s\n' "${machine}"
+if [[ ${arch} == "amd64" ]] && grep -q 'X86-64' <<<"${machine}"; then
+    ok "ELF machine is x86-64"
+elif [[ ${arch} == "arm64" ]] && grep -qi 'aarch64' <<<"${machine}"; then
+    ok "ELF machine is AArch64"
 else
-    bad "compiler flags recorded in the binary contain -march=${MARCH}"
+    bad "ELF machine matches arch=${arch} (got: ${machine})"
 fi
 
-objdump -d --no-show-raw-insn "${bin}" >"${tmpdir}/disasm.txt"
-bmi2=$(grep -cE '[[:space:]](shlx|shrx|sarx|mulx|rorx)([[:space:]]|$)' "${tmpdir}/disasm.txt" || true)
-avx=$(grep -c 'ymm' "${tmpdir}/disasm.txt" || true)
-printf '      instruction census: BMI2=%s ymm=%s\n' "${bmi2}" "${avx}"
-if ((bmi2 > 0)); then
-    ok "compiled code contains BMI2 instructions"
+if readelf -p .GCC.command.line "${bin}" 2>/dev/null | grep -qF -- "-march=${march}"; then
+    ok "compiler flags recorded in the binary contain -march=${march}"
+    readelf -p .GCC.command.line "${bin}" | grep -oF -- "-march=${march}" | head -n1 | sed 's/^/      /'
 else
-    bad "compiled code contains BMI2 instructions"
+    bad "compiler flags recorded in the binary contain -march=${march}"
 fi
-if ((avx > 0)); then
-    ok "compiled code contains AVX (ymm) instructions"
+
+if [[ ${arch} == "arm64" ]]; then
+    ok "arm64 binary carries no x86 BMI2/AVX instructions (AArch64)"
 else
-    bad "compiled code contains AVX (ymm) instructions"
+    objdump -d --no-show-raw-insn "${bin}" >"${tmpdir}/disasm.txt"
+    bmi2=$(grep -cE '[[:space:]](shlx|shrx|sarx|mulx|rorx)([[:space:]]|$)' "${tmpdir}/disasm.txt" || true)
+    avx=$(grep -c 'ymm' "${tmpdir}/disasm.txt" || true)
+    printf '      instruction census: BMI2=%s ymm=%s\n' "${bmi2}" "${avx}"
+    if [[ ${march} == "znver3" ]]; then
+        if ((bmi2 > 0)); then ok "compiled code contains BMI2 instructions"; else bad "compiled code contains BMI2 instructions"; fi
+        if ((avx > 0)); then ok "compiled code contains AVX (ymm) instructions"; else bad "compiled code contains AVX (ymm) instructions"; fi
+    else
+        if ((bmi2 == 0)); then ok "baseline build is free of BMI2 instructions"; else bad "baseline build is free of BMI2 instructions"; fi
+        if ((avx == 0)); then ok "baseline build is free of AVX (ymm) instructions"; else bad "baseline build is free of AVX (ymm) instructions"; fi
+    fi
 fi
 
 # --------------------------------------------------------------------------
@@ -169,13 +209,21 @@ fi
 # --------------------------------------------------------------------------
 # provenance: the patches in this repository are the patches that were built
 # --------------------------------------------------------------------------
-lt_patch_sha=$(sha256sum "${repo_root}/patches/libtorrent/${LT_VERSION}/patch" | cut -d' ' -f1)
+case "${profile}" in
+    base) patch_file="${repo_root}/patches/libtorrent/${LT_VERSION}/base.patch" ;;
+    10g) patch_file="${repo_root}/patches/libtorrent/${LT_VERSION}/patch" ;;
+esac
+lt_patch_sha=$(sha256sum "${patch_file}" | cut -d' ' -f1)
 expect "BUILD-INFO records this repo's libtorrent patch" \
     grep -qx "libtorrent_patch_sha256=${lt_patch_sha}" "${tmpdir}/BUILD-INFO"
 expect "BUILD-INFO records that qBittorrent has no patches" \
     grep -qx 'qbittorrent_patches=none' "${tmpdir}/BUILD-INFO"
-expect "BUILD-INFO records march=${MARCH}" \
-    grep -qx "march=${MARCH}" "${tmpdir}/BUILD-INFO"
+expect "BUILD-INFO records profile=${profile}" \
+    grep -qx "profile=${profile}" "${tmpdir}/BUILD-INFO"
+expect "BUILD-INFO records arch=${arch}" \
+    grep -qx "arch=${arch}" "${tmpdir}/BUILD-INFO"
+expect "BUILD-INFO records march=${march}" \
+    grep -qx "march=${march}" "${tmpdir}/BUILD-INFO"
 expect "BUILD-INFO records libtorrent=${LT_VERSION}" \
     grep -qx "libtorrent=${LT_VERSION}" "${tmpdir}/BUILD-INFO"
 expect "BUILD-INFO records allocator=${allocator}" \
@@ -188,30 +236,34 @@ if [[ ${allocator} == "mimalloc" ]]; then
 fi
 
 # --------------------------------------------------------------------------
-# image layout and configuration
+# image layout and configuration (runs the image's shell, so amd64 / qemu only)
 # --------------------------------------------------------------------------
-layout=$(docker run --rm --entrypoint /bin/sh "${image}" -c '
-    printf "%s %s\n" "$(stat -c "%u:%g %a" /app/qbittorrent-nox)" "$(test -x /app/qbittorrent-nox && echo x)"
-    printf "unrar %s %s\n" "$(stat -c "%a" /usr/bin/unrar)" "$(test -x /usr/bin/unrar && echo x)"
-    printf "qbt-unpack %s %s\n" "$(stat -c "%a" /usr/local/bin/qbt-unpack)" "$(test -x /usr/local/bin/qbt-unpack && echo x)"
-    printf "entrypoint %s\n" "$(test -x /entrypoint.sh && echo x)"
-    printf "seeded-config %s\n" "$(test -e /config/qBittorrent/qBittorrent.conf && echo yes || echo no)"
-')
-grep -qx '0:0 755 x' <<<"${layout}" \
-    && ok "/app/qbittorrent-nox is root-owned, mode 0755, executable" \
-    || bad "/app/qbittorrent-nox is root-owned, mode 0755, executable"
-grep -qx 'unrar 755 x' <<<"${layout}" \
-    && ok "/usr/bin/unrar is mode 0755" \
-    || bad "/usr/bin/unrar is mode 0755"
-grep -qx 'qbt-unpack 755 x' <<<"${layout}" \
-    && ok "/usr/local/bin/qbt-unpack is mode 0755" \
-    || bad "/usr/local/bin/qbt-unpack is mode 0755"
-grep -qx 'entrypoint x' <<<"${layout}" \
-    && ok "/entrypoint.sh is executable" \
-    || bad "/entrypoint.sh is executable"
-grep -qx 'seeded-config no' <<<"${layout}" \
-    && ok "no qBittorrent.conf is baked into the image" \
-    || bad "no qBittorrent.conf is baked into the image"
+if [[ ${can_run} == 1 ]]; then
+    layout=$(docker run --rm --entrypoint /bin/sh "${image}" -c '
+        printf "%s %s\n" "$(stat -c "%u:%g %a" /app/qbittorrent-nox)" "$(test -x /app/qbittorrent-nox && echo x)"
+        printf "unrar %s %s\n" "$(stat -c "%a" /usr/bin/unrar)" "$(test -x /usr/bin/unrar && echo x)"
+        printf "qbt-unpack %s %s\n" "$(stat -c "%a" /usr/local/bin/qbt-unpack)" "$(test -x /usr/local/bin/qbt-unpack && echo x)"
+        printf "entrypoint %s\n" "$(test -x /entrypoint.sh && echo x)"
+        printf "seeded-config %s\n" "$(test -e /config/qBittorrent/qBittorrent.conf && echo yes || echo no)"
+    ')
+    grep -qx '0:0 755 x' <<<"${layout}" \
+        && ok "/app/qbittorrent-nox is root-owned, mode 0755, executable" \
+        || bad "/app/qbittorrent-nox is root-owned, mode 0755, executable"
+    grep -qx 'unrar 755 x' <<<"${layout}" \
+        && ok "/usr/bin/unrar is mode 0755" \
+        || bad "/usr/bin/unrar is mode 0755"
+    grep -qx 'qbt-unpack 755 x' <<<"${layout}" \
+        && ok "/usr/local/bin/qbt-unpack is mode 0755" \
+        || bad "/usr/local/bin/qbt-unpack is mode 0755"
+    grep -qx 'entrypoint x' <<<"${layout}" \
+        && ok "/entrypoint.sh is executable" \
+        || bad "/entrypoint.sh is executable"
+    grep -qx 'seeded-config no' <<<"${layout}" \
+        && ok "no qBittorrent.conf is baked into the image" \
+        || bad "no qBittorrent.conf is baked into the image"
+else
+    skip "image layout checks (foreign-arch binary cannot run without qemu)"
+fi
 
 cfg_user=$(docker image inspect -f '{{.Config.User}}' "${image}")
 [[ ${cfg_user} == '65534:65534' ]] \
@@ -259,11 +311,15 @@ else
     bad "OCI description mentions the ${allocator} allocator (got: ${description})"
 fi
 
-unwanted=$(docker run --rm --entrypoint /bin/sh "${image}" -c 'command -v python3 curl jq vim 2>/dev/null || true')
-if [[ -z ${unwanted} ]]; then
-    ok "no python/curl/jq/vim in the image"
+if [[ ${can_run} == 1 ]]; then
+    unwanted=$(docker run --rm --entrypoint /bin/sh "${image}" -c 'command -v python3 curl jq vim 2>/dev/null || true')
+    if [[ -z ${unwanted} ]]; then
+        ok "no python/curl/jq/vim in the image"
+    else
+        bad "no python/curl/jq/vim in the image (found: $(tr '\n' ' ' <<<"${unwanted}"))"
+    fi
 else
-    bad "no python/curl/jq/vim in the image (found: $(tr '\n' ' ' <<<"${unwanted}"))"
+    skip "unwanted-tool check (foreign-arch binary cannot run without qemu)"
 fi
 
 printf '\n'
