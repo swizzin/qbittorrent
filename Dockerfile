@@ -13,6 +13,13 @@
 ARG QBT_VERSION=5.3.0
 ARG LT_VERSION=1.2.20
 
+# The allocator is the one axis of the A/B image pair. musl (the default) keeps
+# musl's own malloc; mimalloc links mimalloc v3.5.4 as a statically linked
+# drop-in replacement. Everything else (versions, the 10g libtorrent patch, the
+# -march target, the runtime) is identical across the two variants. Any other
+# value fails the build.
+ARG ALLOCATOR=musl
+
 ARG ALPINE_IMAGE=docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 ARG UNRAR_IMAGE=ghcr.io/linuxserver/unrar@sha256:48c0ce2609bb3c35764956bbd9395e95b177421e3c74b3628c3676029f24f2e0
 
@@ -27,6 +34,7 @@ ARG MARCH=znver3
 ARG BUILD_JOBS=16
 ARG QBT_VERSION
 ARG LT_VERSION
+ARG ALLOCATOR
 ARG QBT_TAG=release-${QBT_VERSION}
 ARG LT_TAG=v${LT_VERSION}
 
@@ -47,6 +55,13 @@ ARG QBT_STATIC_SCRIPT_SHA256=0a865a0c09b2621feb05f0e16b9ac29263d7b3bdd0a1e3b8b8b
 ARG ICONV_VERSION=1.18
 ARG ICONV_SHA256=3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8
 
+# mimalloc, the allocator for the ALLOCATOR=mimalloc variant. v3.5.4 is the last
+# of the 3.5 line: v3.6.0 added an always-on profiler, which would contaminate a
+# fair allocator comparison. The release tarball is pinned by sha256 like the
+# other sources.
+ARG MIMALLOC_TAG=v3.5.4
+ARG MIMALLOC_SHA256=36e9b5bf1bb703567a0347491721ce2098000db8284dc55cd53d211452723cdb
+
 SHELL ["/bin/sh", "-c"]
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 
@@ -58,6 +73,13 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 WORKDIR /build
 
+# The allocator is the only thing the two variants differ on; a bad value is a
+# build error rather than a silent fallback.
+RUN case "${ALLOCATOR}" in \
+        musl|mimalloc) ;; \
+        *) printf 'ALLOCATOR must be "musl" or "mimalloc", got: %s\n' "${ALLOCATOR}" >&2; exit 1;; \
+    esac
+
 ADD --checksum=sha256:${QBT_STATIC_SCRIPT_SHA256} \
     ${QBT_STATIC_SCRIPT_URL} \
     /build/qbittorrent-nox-static.sh
@@ -67,6 +89,10 @@ COPY patches/ /build/patches/
 ADD --checksum=sha256:${ICONV_SHA256} \
     https://ftp.gnu.org/gnu/libiconv/libiconv-${ICONV_VERSION}.tar.gz \
     /build/cache/iconv.tar.gz
+
+ADD --checksum=sha256:${MIMALLOC_SHA256} \
+    https://github.com/microsoft/mimalloc/archive/refs/tags/${MIMALLOC_TAG}.tar.gz \
+    /build/mimalloc.tar.gz
 
 RUN set -eux; \
     tar -xzf /build/cache/iconv.tar.gz -C /build/cache; \
@@ -95,9 +121,41 @@ RUN set -eux; \
         > "/build/qbt-build/patches/qbittorrent/${QBT_VERSION}/url"; \
     test -s "/build/qbt-build/patches/qbittorrent/${QBT_VERSION}/url"
 
+# mimalloc (ALLOCATOR=mimalloc only): build the single object file that, linked
+# first on the final link line, replaces malloc/free/calloc/realloc/
+# aligned_alloc/posix_memalign/memalign/malloc_usable_size. MI_LIBC_MUSL selects
+# the musl TLS model; MI_OVERRIDE emits the strong override symbols;
+# MI_SECURE=OFF and a Release build keep mimalloc at its default (fair)
+# behaviour. It is compiled with the same -march/-mtune/-frecord-gcc-switches
+# flags as everything else, and the build fails unless that is actually
+# recorded in the object.
+RUN set -eux; \
+    if [ "${ALLOCATOR}" = "mimalloc" ]; then \
+        mkdir -p /build/mimalloc/src /build/mimalloc/build; \
+        tar -xzf /build/mimalloc.tar.gz -C /build/mimalloc/src --strip-components=1; \
+        rm -f /build/mimalloc.tar.gz; \
+        cmake -S /build/mimalloc/src -B /build/mimalloc/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMI_OVERRIDE=ON \
+            -DMI_BUILD_OBJECT=ON \
+            -DMI_BUILD_SHARED=OFF \
+            -DMI_BUILD_STATIC=ON \
+            -DMI_BUILD_TESTS=OFF \
+            -DMI_SECURE=OFF \
+            -DMI_DEBUG=OFF \
+            -DMI_LIBC_MUSL=ON \
+            -DCMAKE_C_FLAGS="-march=${MARCH} -mtune=${MARCH} -frecord-gcc-switches"; \
+        cmake --build /build/mimalloc/build; \
+        test -s /build/mimalloc/build/mimalloc.o; \
+        readelf -p .GCC.command.line /build/mimalloc/build/mimalloc.o | grep -qF -- "-march=${MARCH}"; \
+    fi
+
 # The script appends CFLAGS/CXXFLAGS/LDFLAGS from the environment to its own
 # flags, so this is how the target is set for every module it builds (zlib,
-# openssl, boost, Qt, libtorrent, qBittorrent).
+# openssl, boost, Qt, libtorrent, qBittorrent). For the mimalloc variant the
+# LDFLAGS also carry mimalloc.o, which the script appends at the end of the
+# qbittorrent link line; the driver links libc.a after that, so musl's own
+# malloc objects are never pulled in and the override is clean (no -z muldefs).
 #
 # -frecord-gcc-switches records the compiler flags in .GCC.command.line, which
 # survives -s/LTO and is what hack/verify-binary.sh reads back out of the
@@ -111,9 +169,13 @@ RUN set -eux; \
 # failed. On failure only the tail of the build log and of the per-module logs
 # the script writes are printed.
 RUN set -eu; \
+    ldflags="-march=${MARCH}"; \
+    if [ "${ALLOCATOR}" = "mimalloc" ]; then \
+        ldflags="${ldflags} /build/mimalloc/build/mimalloc.o"; \
+    fi; \
     export CFLAGS="-march=${MARCH} -mtune=${MARCH} -frecord-gcc-switches" \
            CXXFLAGS="-march=${MARCH} -mtune=${MARCH} -frecord-gcc-switches" \
-           LDFLAGS="-march=${MARCH}"; \
+           LDFLAGS="${ldflags}"; \
     if ! bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -cd /build/cache -n all > /build/build.log 2>&1; then \
         echo "=== build failed: tail -n 200 of /build/build.log ==="; \
         tail -n 200 /build/build.log; \
@@ -152,10 +214,14 @@ RUN set -eux; \
     ninja -C "$(echo /build/qbt-build/qBittorrent-*/build)" -t commands > /build/ninja-qbittorrent.txt; \
     awk -v m="-march=${MARCH}" 'index($0, "sessionimpl.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-qbittorrent.txt; \
     "${bin}" --version > /build/version.txt; \
-    grep -qF "v${QBT_VERSION}" /build/version.txt
+    grep -qF "v${QBT_VERSION}" /build/version.txt; \
+    if [ "${ALLOCATOR}" = "mimalloc" ]; then \
+        grep -qF 'mimalloc' "${bin}"; \
+        readelf -p .GCC.command.line "${bin}" | grep -qF -- "-march=${MARCH}"; \
+    fi
 
-# Provenance for the runtime image: what was built, with which target, and the
-# exact patch consumed from this repository.
+# Provenance for the runtime image: what was built, with which target, the
+# allocator, and the exact patch consumed from this repository.
 RUN set -eux; \
     { \
         echo "qbittorrent=${QBT_VERSION}"; \
@@ -163,8 +229,13 @@ RUN set -eux; \
         echo "libtorrent=${LT_VERSION}"; \
         echo "march=${MARCH}"; \
         echo "build_jobs=${BUILD_JOBS}"; \
+        echo "allocator=${ALLOCATOR}"; \
         echo "libtorrent_patch_sha256=$(sha256sum "/build/patches/libtorrent/${LT_VERSION}/patch" | cut -d' ' -f1)"; \
         echo "build_script_sha256=${QBT_STATIC_SCRIPT_SHA256}"; \
+        if [ "${ALLOCATOR}" = "mimalloc" ]; then \
+            echo "mimalloc_tag=${MIMALLOC_TAG}"; \
+            echo "mimalloc_sha256=${MIMALLOC_SHA256}"; \
+        fi; \
     } > /build/BUILD-INFO; \
     cat /build/BUILD-INFO
 
@@ -178,11 +249,12 @@ FROM ${ALPINE_IMAGE} AS runtime
 ARG QBT_VERSION
 ARG LT_VERSION
 ARG MARCH=znver3
+ARG ALLOCATOR=musl
 
 LABEL org.opencontainers.image.source="https://github.com/swizzin/qbittorrent" \
       org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-or-later" \
       org.opencontainers.image.version="${QBT_VERSION}" \
-      org.opencontainers.image.description="qBittorrent ${QBT_VERSION} on libtorrent ${LT_VERSION}, static musl, 10g libtorrent defaults, compiled for ${MARCH}"
+      org.opencontainers.image.description="qBittorrent ${QBT_VERSION} on libtorrent ${LT_VERSION}, static musl, 10g libtorrent defaults, compiled for ${MARCH}, ${ALLOCATOR} malloc"
 
 RUN apk add --no-cache catatonit tzdata ca-certificates bash 7zip
 

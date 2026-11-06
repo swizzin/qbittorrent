@@ -5,6 +5,12 @@ A container image of qBittorrent, built from source: **qBittorrent 5.3.0** on
 compiled-in defaults tuned for a 10 Gbit seedbox, and compiled for the
 **znver3** microarchitecture.
 
+It ships as two variants that differ **only in the memory allocator**: `musl`
+(musl's own malloc — the default) and `mimalloc` (mimalloc v3.5.4 statically
+linked as a drop-in replacement). Everything else — versions, the 10g
+libtorrent patch, the `-march` target, the runtime — is identical, so the pair
+is a fair A/B.
+
 It is a drop-in replacement for a `qbittorrent-nox` container: same binary
 name, same `/config` layout, same environment variables, and it runs unprivileged
 with a read-only root filesystem.
@@ -13,8 +19,10 @@ with a read-only root filesystem.
 
 | tag | meaning |
 |---|---|
-| `5.3.0-lt1.2.20-10g-znver3` | moving tag for this build recipe |
-| `sha-<12 hex>` | immutable tag for the commit that produced the image |
+| `5.3.0-lt1.2.20-10g-znver3` | moving tag for the `musl` allocator build |
+| `5.3.0-lt1.2.20-10g-znver3-mimalloc` | moving tag for the `mimalloc` allocator build |
+| `sha-<12 hex>` | immutable tag for the commit (musl variant) |
+| `sha-<12 hex>-mimalloc` | immutable tag for the commit (mimalloc variant) |
 
 ## CPU requirement
 
@@ -82,8 +90,9 @@ tooling at runtime; with `/config` and `/tmp` writable it runs with
   completion*: `/usr/local/bin/qbt-unpack "%F"`
 - `bash`, `catatonit`, `tzdata`, `ca-certificates`
 
-`/app/BUILD-INFO` records the exact versions, the CPU target, the sha256 of the
-build script and the sha256 of both patches the image was built with.
+`/app/BUILD-INFO` records the exact versions, the CPU target, the allocator,
+the sha256 of the build script and the sha256 of both patches the image was
+built with.
 
 ## Patches
 
@@ -98,6 +107,38 @@ comment-only file in that module's patch directory, which makes the script take
 its local (empty) patch path instead. The build asserts that exactly one patch
 was applied and that the qBittorrent tree is still the pristine tag.
 
+## Allocator variants
+
+`ARG ALLOCATOR` selects the memory allocator; it is the **only** difference
+between the two images.
+
+- `ALLOCATOR=musl` (default): musl's own malloc. This is the build the `musl`
+  tag has always carried.
+- `ALLOCATOR=mimalloc`: [mimalloc](https://github.com/microsoft/mimalloc)
+  **v3.5.4**, compiled to a single object file (`MI_BUILD_OBJECT`) with
+  `MI_OVERRIDE=ON` and `MI_LIBC_MUSL=ON`, and linked **first** on the final
+  link line through `LDFLAGS`. Because the linker only pulls musl's
+  `malloc.o`/`free.o`/… out of `libc.a` to satisfy an undefined symbol, and
+  mimalloc's object is linked before `libc.a`, mimalloc replaces
+  `malloc`/`free`/`calloc`/`realloc`/`aligned_alloc`/`posix_memalign`/
+  `memalign`/`malloc_usable_size` cleanly — no `-z muldefs`. `MI_SECURE=OFF`,
+  no debug, Release; no `MIMALLOC_*` environment variables are set at runtime,
+  so mimalloc runs at its default behaviour.
+
+  mimalloc is pinned to **v3.5.4** deliberately: v3.6.0 added an always-on
+  profiler, which would contaminate the comparison. The release tarball is
+  pinned by sha256 (`MIMALLOC_TAG` + `MIMALLOC_SHA256` in the Dockerfile), and
+  the object is compiled with the same `-march=znver3 -mtune=znver3
+  -frecord-gcc-switches` flags as everything else.
+
+Any other `ALLOCATOR` value fails the build. A third allocator (e.g. jemalloc)
+would be added the same way: a pin for its source, a build step that produces a
+linkable object, a `-suffix` for its tag in `hack/versions.sh`, and an
+allocator branch in `hack/verify-binary.sh`.
+
+`/app/BUILD-INFO` records `allocator=musl|mimalloc`, plus `mimalloc_tag` and
+`mimalloc_sha256` for the mimalloc variant.
+
 ## Updating
 
 qBittorrent: change `QBT_VERSION` at the top of the Dockerfile (for example
@@ -108,9 +149,10 @@ qBittorrent: change `QBT_VERSION` at the top of the Dockerfile (for example
 libtorrent: change `LT_VERSION`, then regenerate
 `patches/libtorrent/<version>/patch` from that tag's `src/settings_pack.cpp`
 (see [patches/libtorrent/README.md](patches/libtorrent/README.md)) and check it
-applies. OpenSSL: change `OPENSSL_TAG`. Qt and Boost are chosen by the pinned
-build script; moving to a newer build script means updating its commit and
-sha256 together.
+applies. OpenSSL: change `OPENSSL_TAG`. mimalloc: change `MIMALLOC_TAG` and
+`MIMALLOC_SHA256` together (stay on a 3.5.x with no always-on profiler). Qt and
+Boost are chosen by the pinned build script; moving to a newer build script
+means updating its commit and sha256 together.
 
 ## Building locally
 
@@ -119,6 +161,8 @@ host — the build runs natively, not under emulation.
 
 ```sh
 docker buildx build --load -t qbittorrent:5.3.0-lt1.2.20-10g-znver3 .
+docker buildx build --load -t qbittorrent:5.3.0-lt1.2.20-10g-znver3-mimalloc \
+  --build-arg ALLOCATOR=mimalloc .
 ```
 
 The build is done by [userdocs/qbittorrent-nox-static](https://github.com/userdocs/qbittorrent-nox-static)
@@ -144,16 +188,22 @@ real gate.
 
 ```sh
 hack/verify-binary.sh qbittorrent:5.3.0-lt1.2.20-10g-znver3
+hack/verify-binary.sh qbittorrent:5.3.0-lt1.2.20-10g-znver3-mimalloc
 hack/smoke.sh        qbittorrent:5.3.0-lt1.2.20-10g-znver3
+hack/smoke.sh        qbittorrent:5.3.0-lt1.2.20-10g-znver3-mimalloc
 ```
 
 `verify-binary.sh` inspects the stripped binary: qBittorrent and libtorrent
-version strings, absence of gcov/profiling/tcmalloc/mimalloc artefacts, static
-linkage, the recorded compiler flags (`.GCC.command.line`, written by
+version strings, absence of gcov/profiling/tcmalloc artefacts, static linkage,
+the recorded compiler flags (`.GCC.command.line`, written by
 `-frecord-gcc-switches` and preserved through `-s` and LTO) and an instruction
 census (BMI2 and AVX instructions, which a baseline x86-64 build cannot
 contain). It also checks the image layout, user, entrypoint, environment and
-labels.
+labels. The allocator is read from `/app/BUILD-INFO`: the `musl` variant must be
+free of mimalloc, and the `mimalloc` variant must contain mimalloc **and** prove
+it is live at runtime — the script runs the binary with `MIMALLOC_VERBOSE=1`
+and `MIMALLOC_SHOW_STATS=1` (only during the check) and requires mimalloc's own
+output, rather than trusting static presence.
 
 `smoke.sh` runs the image with `--read-only`, `--user 1000:1000`, tmpfs `/tmp`
 and an empty `/config`, waits for the WebUI on a non-default port, logs in with
@@ -164,10 +214,13 @@ and that `unrar`, `7zz`, `unzip` and `qbt-unpack` actually work.
 
 ## CI
 
-`.github/workflows/build.yml` runs on a self-hosted runner labelled
-`znver3`: build, verify, smoke test, then push to `ghcr.io/swizzin/qbittorrent`
-with both tags. Images are only pushed after the tests pass. The runner needs
-docker with buildx; the workflow installs `binutils` and `file` for
+`.github/workflows/build.yml` runs a matrix over the two allocators on a
+self-hosted runner labelled `znver3`, one runner pod at a time
+(`max-parallel: 1`): for each of `musl` and `mimalloc` it builds, verifies,
+smoke tests, then pushes to `ghcr.io/swizzin/qbittorrent` with both tags (the
+moving tag and the `sha-<12>` tag, the latter suffixed `-mimalloc` for the
+mimalloc variant). Images are only pushed after the tests pass. The runner
+needs docker with buildx; the workflow installs `binutils` and `file` for
 `hack/verify-binary.sh` when they are missing. A runner can export
 `BUILD_JOBS` to cap compile parallelism below the default of 16.
 

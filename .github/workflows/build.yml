@@ -21,10 +21,16 @@ env:
 
 jobs:
   image:
-    name: build, verify, push
+    name: build, verify, push (${{ matrix.allocator }})
     # Native znver3 build: the image is compiled with -march=znver3 and is not
     # emulated, so the runner has to be a Zen 3 (or newer) machine.
     runs-on: [self-hosted, linux, x64, znver3]
+    # One runner pod at a time: both matrix jobs target the same shared box.
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        allocator: [musl, mimalloc]
     # A capped runner (BUILD_JOBS=6) takes roughly twice the 16-job time.
     timeout-minutes: 240
     steps:
@@ -46,18 +52,21 @@ jobs:
           fi
 
       - name: Read versions from the Dockerfile
-        run: hack/versions.sh >> "${GITHUB_ENV}"
+        run: hack/versions.sh "${{ matrix.allocator }}" >> "${GITHUB_ENV}"
 
       # BUILD_JOBS comes from the runner's environment when it sets one, so a
       # runner on a shared host can cap compile parallelism without a commit.
+      # ALLOCATOR is the one axis of the A/B pair; the sha tag is suffixed per
+      # variant so the immutable tag is unique too.
       - name: Build
         run: |
           docker buildx build \
             --load \
             --progress=plain \
             --build-arg BUILD_JOBS="${BUILD_JOBS:-16}" \
+            --build-arg ALLOCATOR="${{ matrix.allocator }}" \
             --tag "${IMAGE}:${IMAGE_TAG}" \
-            --tag "${IMAGE}:sha-${GITHUB_SHA::12}" \
+            --tag "${IMAGE}:sha-${GITHUB_SHA::12}${{ matrix.allocator == 'mimalloc' && '-mimalloc' || '' }}" \
             .
 
       - name: Verify binary
@@ -76,4 +85,4 @@ jobs:
       - name: Push
         run: |
           docker push "${IMAGE}:${IMAGE_TAG}"
-          docker push "${IMAGE}:sha-${GITHUB_SHA::12}"
+          docker push "${IMAGE}:sha-${GITHUB_SHA::12}${{ matrix.allocator == 'mimalloc' && '-mimalloc' || '' }}"

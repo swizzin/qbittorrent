@@ -56,6 +56,16 @@ docker cp "${container}:/app/qbittorrent-nox" "${tmpdir}/qbittorrent-nox" >/dev/
 docker cp "${container}:/app/BUILD-INFO" "${tmpdir}/BUILD-INFO" >/dev/null
 bin="${tmpdir}/qbittorrent-nox"
 
+# The allocator this image was built with comes from BUILD-INFO (older images
+# predate the field and are therefore the musl variant).
+allocator=$(sed -n 's/^allocator=//p' "${tmpdir}/BUILD-INFO")
+allocator="${allocator:-musl}"
+case "${allocator}" in
+    musl|mimalloc) ;;
+    *) printf 'verify-binary: unknown allocator %q in BUILD-INFO\n' "${allocator}" >&2; exit 2 ;;
+esac
+printf 'allocator: %s\n\n' "${allocator}"
+
 printf 'image: %s\n\n' "${image}"
 
 # --------------------------------------------------------------------------
@@ -77,12 +87,43 @@ else
 fi
 
 # --------------------------------------------------------------------------
-# no instrumentation, no allocator
+# no instrumentation; allocator
 # --------------------------------------------------------------------------
-if hits=$(grep -aoE '__gcov|fprofile|tcmalloc|MallocExtension|mi_malloc' "${bin}" | sort -u) && [[ -n ${hits} ]]; then
-    bad "binary is free of profiling/allocator artefacts (found: $(tr '\n' ' ' <<<"${hits}"))"
+if hits=$(grep -aoE '__gcov|fprofile|tcmalloc|MallocExtension' "${bin}" | sort -u) && [[ -n ${hits} ]]; then
+    bad "binary is free of profiling/tcmalloc artefacts (found: $(tr '\n' ' ' <<<"${hits}"))"
 else
-    ok "binary is free of gcov/fprofile/tcmalloc/mimalloc artefacts"
+    ok "binary is free of gcov/fprofile/tcmalloc artefacts"
+fi
+
+if [[ ${allocator} == "mimalloc" ]]; then
+    # Static presence alone is not enough: prove mimalloc is the live allocator
+    # at runtime. MIMALLOC_VERBOSE/SHOW_STATS are set only for this check, so
+    # the runtime image keeps mimalloc's default behaviour.
+    if grep -aq 'mimalloc' "${bin}"; then
+        ok "mimalloc is compiled into the binary"
+    else
+        bad "mimalloc is compiled into the binary"
+    fi
+
+    verbose_out=$(docker run --rm -e MIMALLOC_VERBOSE=1 --entrypoint /app/qbittorrent-nox "${image}" --version 2>&1 || true)
+    if grep -q 'mimalloc: process init' <<<"${verbose_out}"; then
+        ok "MIMALLOC_VERBOSE=1 proves mimalloc is the live allocator"
+    else
+        bad "MIMALLOC_VERBOSE=1 proves mimalloc is the live allocator (got: $(head -c 300 <<<"${verbose_out}"))"
+    fi
+
+    stats_out=$(docker run --rm -e MIMALLOC_SHOW_STATS=1 --entrypoint /app/qbittorrent-nox "${image}" --version 2>&1 || true)
+    if grep -qE 'arenas|subproc' <<<"${stats_out}"; then
+        ok "MIMALLOC_SHOW_STATS=1 prints mimalloc heap stats at exit"
+    else
+        bad "MIMALLOC_SHOW_STATS=1 prints mimalloc heap stats at exit"
+    fi
+else
+    if grep -aq 'mimalloc' "${bin}"; then
+        bad "musl variant is free of mimalloc artefacts"
+    else
+        ok "musl variant is free of mimalloc artefacts"
+    fi
 fi
 
 # --------------------------------------------------------------------------
@@ -137,6 +178,14 @@ expect "BUILD-INFO records march=${MARCH}" \
     grep -qx "march=${MARCH}" "${tmpdir}/BUILD-INFO"
 expect "BUILD-INFO records libtorrent=${LT_VERSION}" \
     grep -qx "libtorrent=${LT_VERSION}" "${tmpdir}/BUILD-INFO"
+expect "BUILD-INFO records allocator=${allocator}" \
+    grep -qx "allocator=${allocator}" "${tmpdir}/BUILD-INFO"
+if [[ ${allocator} == "mimalloc" ]]; then
+    expect "BUILD-INFO records mimalloc tag ${MIMALLOC_TAG}" \
+        grep -qx "mimalloc_tag=${MIMALLOC_TAG}" "${tmpdir}/BUILD-INFO"
+    expect "BUILD-INFO records the mimalloc tarball sha256" \
+        grep -qx "mimalloc_sha256=${MIMALLOC_SHA256}" "${tmpdir}/BUILD-INFO"
+fi
 
 # --------------------------------------------------------------------------
 # image layout and configuration
@@ -200,6 +249,15 @@ check_label() {
 check_label org.opencontainers.image.source https://github.com/swizzin/qbittorrent
 check_label org.opencontainers.image.licenses 'Apache-2.0 AND GPL-2.0-or-later'
 check_label org.opencontainers.image.version "${QBT_VERSION}"
+
+# The OCI description records which allocator the image carries.
+description=$(docker image inspect -f '{{json .Config.Labels}}' "${image}" \
+    | sed -n 's/.*"org.opencontainers.image.description":"\([^"]*\)".*/\1/p')
+if grep -qF "${allocator}" <<<"${description}"; then
+    ok "OCI description mentions the ${allocator} allocator"
+else
+    bad "OCI description mentions the ${allocator} allocator (got: ${description})"
+fi
 
 unwanted=$(docker run --rm --entrypoint /bin/sh "${image}" -c 'command -v python3 curl jq vim 2>/dev/null || true')
 if [[ -z ${unwanted} ]]; then
