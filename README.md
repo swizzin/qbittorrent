@@ -167,7 +167,9 @@ and that `unrar`, `7zz`, `unzip` and `qbt-unpack` actually work.
 `.github/workflows/build.yml` runs on a self-hosted runner labelled
 `znver3`: build, verify, smoke test, then push to `ghcr.io/swizzin/qbittorrent`
 with both tags. Images are only pushed after the tests pass. The runner needs
-docker with buildx, and `binutils` on the host for `hack/verify-binary.sh`.
+docker with buildx; the workflow installs `binutils` and `file` for
+`hack/verify-binary.sh` when they are missing. A runner can export
+`BUILD_JOBS` to cap compile parallelism below the default of 16.
 
 ## Licences
 
