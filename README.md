@@ -1,15 +1,14 @@
 # qbittorrent
 
 A container image of qBittorrent, built from source: **qBittorrent 5.3.0** on
-**libtorrent 1.2.20**, statically linked against musl, with libtorrent's
-compiled-in defaults tuned for a 10 Gbit seedbox, and compiled for the
-**znver3** microarchitecture.
+**libtorrent 1.2.20**, statically linked against musl.
 
-It ships as two variants that differ **only in the memory allocator**: `musl`
-(musl's own malloc — the default) and `mimalloc` (mimalloc v3.5.4 statically
-linked as a drop-in replacement). Everything else — versions, the 10g
-libtorrent patch, the `-march` target, the runtime — is identical, so the pair
-is a fair A/B.
+It is built in two compiled libtorrent profiles — **`base`** (safe on the
+smallest box) and **`10g`** (tuned for a 10 Gbit seedbox) — across two
+targets: **amd64** (baseline `x86-64-v2` or `znver3`) and **arm64**
+(`aarch64`, cross-compiled). The allocator is a further axis: **`musl`**
+(musl's own malloc — the default) and, for the `10g-znver3` amd64 line only,
+**`mimalloc`** (mimalloc v3.5.4 statically linked as a drop-in replacement).
 
 It is a drop-in replacement for a `qbittorrent-nox` container: same binary
 name, same `/config` layout, same environment variables, and it runs unprivileged
@@ -19,23 +18,51 @@ with a read-only root filesystem.
 
 | tag | meaning |
 |---|---|
-| `5.3.0-lt1.2.20-10g-znver3` | moving tag for the `musl` allocator build |
-| `5.3.0-lt1.2.20-10g-znver3-mimalloc` | moving tag for the `mimalloc` allocator build |
-| `sha-<12 hex>` | immutable tag for the commit (musl variant) |
-| `sha-<12 hex>-mimalloc` | immutable tag for the commit (mimalloc variant) |
+| `5.3.0-lt1.2.20` | moving tag, `base` profile, multi-arch manifest (amd64 + arm64) |
+| `5.3.0-lt1.2.20-10g` | moving tag, `10g` profile, baseline CPU, multi-arch manifest (amd64 + arm64) |
+| `5.3.0-lt1.2.20-10g-znver3` | moving tag, `10g` profile, `znver3` amd64, `musl` |
+| `5.3.0-lt1.2.20-10g-znver3-mimalloc` | moving tag, `10g` profile, `znver3` amd64, `mimalloc` |
+| `sha-<12 hex>` | immutable tag for the commit (`10g-znver3` musl) |
+| `sha-<12 hex>-mimalloc` | immutable tag for the commit (`10g-znver3` mimalloc) |
+| `sha-<12 hex>-base` | immutable multi-arch manifest for the commit (`base`) |
+| `sha-<12 hex>-10g` | immutable multi-arch manifest for the commit (`10g` baseline) |
+
+The multi-arch tags are assembled from per-arch images that are also pushed, as
+`<tag>-amd64` and `<tag>-arm64`; those are build artefacts the manifest is made
+from, not intended for pinning.
 
 ## CPU requirement
 
-The whole image — qBittorrent, libtorrent, Qt, OpenSSL, Boost, zlib — is
-compiled with `-march=znver3 -mtune=znver3`. That is AMD Zen 3 (Ryzen 5000,
-EPYC 7003) and any CPU that implements the same instruction set (AVX2, BMI2,
-FMA, VAES, …). **On anything older the binary will die with SIGILL.**
+- `5.3.0-lt1.2.20-10g-znver3[-mimalloc]`: compiled with `-march=znver3
+  -mtune=znver3` — AMD Zen 3 (Ryzen 5000, EPYC 7003) or newer (AVX2, BMI2, FMA,
+  VAES, …). **On anything older the binary will die with SIGILL.**
+- `5.3.0-lt1.2.20` and `5.3.0-lt1.2.20-10g` (amd64): compiled with
+  `-march=x86-64-v2` (SSE4.2, POPCNT, …), the baseline that runs on any
+  x86-64 CPU from ~2009 on.
+- `5.3.0-lt1.2.20` and `5.3.0-lt1.2.20-10g` (arm64): compiled for the
+  `armv8-a` baseline (any 64-bit ARM server).
 
-A baseline build is one build argument away:
+`verify-binary.sh` asserts the exact architecture and `-march` of every build:
+the ELF machine, the recorded `.GCC.command.line` flags, and — for amd64 — an
+instruction census (BMI2/AVX present in a `znver3` build, absent from an
+`x86-64-v2` build).
 
-```sh
-docker buildx build --build-arg MARCH=x86-64-v2 --load -t qbittorrent:baseline .
-```
+## The build matrix
+
+| profile | CPU | arch | allocator | tag |
+|---|---|---|---|---|
+| base | baseline | amd64 | musl | `5.3.0-lt1.2.20` |
+| base | baseline | arm64 | musl | `5.3.0-lt1.2.20` |
+| 10g | baseline | amd64 | musl | `5.3.0-lt1.2.20-10g` |
+| 10g | baseline | arm64 | musl | `5.3.0-lt1.2.20-10g` |
+| 10g | znver3 | amd64 | musl | `5.3.0-lt1.2.20-10g-znver3` |
+| 10g | znver3 | amd64 | mimalloc | `5.3.0-lt1.2.20-10g-znver3-mimalloc` |
+
+`base` and `10g` differ only in two compile-only libtorrent defaults
+(`send_not_sent_low_watermark` and `max_peer_recv_buffer_size`); four other
+tunings are shared. The runtime profiles (`light`/`1g`/`10g`) are
+`qBittorrent.conf` presets, not image axes — they are not built as tags. See
+[patches/libtorrent/README.md](patches/libtorrent/README.md).
 
 ## Runtime contract
 
@@ -48,7 +75,7 @@ docker run -d \
   -e QBT_WEBUI_PORT=8080 \
   -e QBT_TORRENTING_PORT=51413 \
   -p 8080:8080 -p 51413:51413 -p 51413:51413/udp \
-  ghcr.io/swizzin/qbittorrent:5.3.0-lt1.2.20-10g-znver3
+  ghcr.io/swizzin/qbittorrent:5.3.0-lt1.2.20
 ```
 
 | item | value |
@@ -90,15 +117,20 @@ tooling at runtime; with `/config` and `/tmp` writable it runs with
   completion*: `/usr/local/bin/qbt-unpack "%F"`
 - `bash`, `catatonit`, `tzdata`, `ca-certificates`
 
-`/app/BUILD-INFO` records the exact versions, the CPU target, the allocator,
-the sha256 of the build script and the sha256 of both patches the image was
-built with.
+`/app/BUILD-INFO` records the exact versions, the CPU target, the profile, the
+architecture, the allocator, the sha256 of the build script and the sha256 of
+the patch the image was built with.
 
 ## Patches
 
-- `patches/libtorrent/1.2.20/patch` — six compiled-in libtorrent defaults (the
-  "10g" profile). See [patches/libtorrent/README.md](patches/libtorrent/README.md)
-  for what each one does and why.
+- `patches/libtorrent/1.2.20/patch` — the `10g` profile: six compiled-in
+  libtorrent defaults.
+- `patches/libtorrent/1.2.20/base.patch` — the `base` profile: the same six,
+  except `send_not_sent_low_watermark` and `max_peer_recv_buffer_size` stay at
+  the stock/baseline values.
+
+See [patches/libtorrent/README.md](patches/libtorrent/README.md) for what each
+one does and why, and the two values that differ between the profiles.
 
 qBittorrent itself is built from the `release-5.3.0` tag **unpatched**. The
 build script would otherwise fetch patches for the tag from
@@ -109,8 +141,8 @@ was applied and that the qBittorrent tree is still the pristine tag.
 
 ## Allocator variants
 
-`ARG ALLOCATOR` selects the memory allocator; it is the **only** difference
-between the two images.
+`ARG ALLOCATOR` selects the memory allocator; for the `10g-znver3` amd64 line it
+is the **only** difference between two images.
 
 - `ALLOCATOR=musl` (default): musl's own malloc. This is the build the `musl`
   tag has always carried.
@@ -131,8 +163,10 @@ between the two images.
   the object is compiled with the same `-march=znver3 -mtune=znver3
   -frecord-gcc-switches` flags as everything else.
 
-Any other `ALLOCATOR` value fails the build. A third allocator (e.g. jemalloc)
-would be added the same way: a pin for its source, a build step that produces a
+`mimalloc` is only valid for the `10g-znver3` amd64 line; the Dockerfile fails
+any other combination, and the baseline/arm64 images are `musl` only. Any other
+`ALLOCATOR` value fails the build. A third allocator (e.g. jemalloc) would be
+added the same way: a pin for its source, a build step that produces a
 linkable object, a `-suffix` for its tag in `hack/versions.sh`, and an
 allocator branch in `hack/verify-binary.sh`.
 
@@ -147,22 +181,41 @@ qBittorrent: change `QBT_VERSION` at the top of the Dockerfile (for example
 `hack/versions.sh`, and there are no per-version qBittorrent patch files.
 
 libtorrent: change `LT_VERSION`, then regenerate
-`patches/libtorrent/<version>/patch` from that tag's `src/settings_pack.cpp`
-(see [patches/libtorrent/README.md](patches/libtorrent/README.md)) and check it
-applies. OpenSSL: change `OPENSSL_TAG`. mimalloc: change `MIMALLOC_TAG` and
-`MIMALLOC_SHA256` together (stay on a 3.5.x with no always-on profiler). Qt and
-Boost are chosen by the pinned build script; moving to a newer build script
-means updating its commit and sha256 together.
+`patches/libtorrent/<version>/patch` and `base.patch` from that tag's
+`src/settings_pack.cpp` (see [patches/libtorrent/README.md](patches/libtorrent/README.md))
+and check they apply. OpenSSL: change `OPENSSL_TAG`. mimalloc: change
+`MIMALLOC_TAG` and `MIMALLOC_SHA256` together (stay on a 3.5.x with no
+always-on profiler). Qt and Boost are chosen by the pinned build script; moving
+to a newer build script means updating its commit and sha256 together.
 
 ## Building locally
 
-Requirements: docker with buildx, ~20 GiB of free disk, and a Zen 3 (or newer)
-host — the build runs natively, not under emulation.
+Requirements: docker with buildx, ~20 GiB of free disk. The amd64 builds run
+natively; the arm64 builds are cross-compiled but need qemu binfmt to assemble
+the arm64 runtime image and smoke-test it.
 
 ```sh
-docker buildx build --load -t qbittorrent:5.3.0-lt1.2.20-10g-znver3 .
-docker buildx build --load -t qbittorrent:5.3.0-lt1.2.20-10g-znver3-mimalloc \
-  --build-arg ALLOCATOR=mimalloc .
+# base profile, baseline amd64
+docker buildx build --load --platform linux/amd64 \
+  --build-arg PROFILE=base --build-arg MARCH=x86-64-v2 \
+  -t qbittorrent:5.3.0-lt1.2.20 .
+
+# 10g profile, baseline amd64
+docker buildx build --load --platform linux/amd64 \
+  --build-arg PROFILE=10g --build-arg MARCH=x86-64-v2 \
+  -t qbittorrent:5.3.0-lt1.2.20-10g .
+
+# 10g profile, znver3 amd64 (the existing line), and its mimalloc A/B partner
+docker buildx build --load --platform linux/amd64 \
+  -t qbittorrent:5.3.0-lt1.2.20-10g-znver3 .
+docker buildx build --load --platform linux/amd64 \
+  --build-arg ALLOCATOR=mimalloc \
+  -t qbittorrent:5.3.0-lt1.2.20-10g-znver3-mimalloc .
+
+# arm64 (cross-compiled; qemu binfmt must be registered for the runtime stage)
+docker buildx build --load --platform linux/arm64 \
+  --build-arg PROFILE=base \
+  -t qbittorrent:5.3.0-lt1.2.20-arm64 .
 ```
 
 The build is done by [userdocs/qbittorrent-nox-static](https://github.com/userdocs/qbittorrent-nox-static)
@@ -171,9 +224,10 @@ itself is pinned by sha256 in the `ADD --checksum` line. Everything else is
 pinned too: qBittorrent `release-5.3.0`, libtorrent `v1.2.20`, OpenSSL
 `openssl-3.5.9` (the 3.5 LTS line: libtorrent 1.2 pulls Boost 1.86, whose asio
 TLS hostname verification does not compile against the opaque `ASN1_STRING` of
-OpenSSL 4.x), libiconv 1.18 by sha256, and Alpine 3.24 by digest. Patches are
-copied into the script's patch tree before the build, so the compile step needs
-no network access for patches.
+OpenSSL 4.x), libiconv 1.18 by sha256, and Alpine 3.24 by digest (a multi-arch
+index, so the same pin resolves amd64 and arm64). Patches are copied into the
+script's patch tree before the build, so the compile step needs no network
+access for patches.
 
 About 10–15 minutes on a 24-thread Zen 3 host. `--build-arg BUILD_JOBS=`
 controls parallelism; the default is 16 to stay inside 32 GiB of RAM.
@@ -187,23 +241,26 @@ real gate.
 ## Verifying
 
 ```sh
-hack/verify-binary.sh qbittorrent:5.3.0-lt1.2.20-10g-znver3
-hack/verify-binary.sh qbittorrent:5.3.0-lt1.2.20-10g-znver3-mimalloc
-hack/smoke.sh        qbittorrent:5.3.0-lt1.2.20-10g-znver3
-hack/smoke.sh        qbittorrent:5.3.0-lt1.2.20-10g-znver3-mimalloc
+hack/verify-binary.sh qbittorrent:5.3.0-lt1.2.20
+hack/smoke.sh        qbittorrent:5.3.0-lt1.2.20
 ```
 
 `verify-binary.sh` inspects the stripped binary: qBittorrent and libtorrent
 version strings, absence of gcov/profiling/tcmalloc artefacts, static linkage,
 the recorded compiler flags (`.GCC.command.line`, written by
-`-frecord-gcc-switches` and preserved through `-s` and LTO) and an instruction
-census (BMI2 and AVX instructions, which a baseline x86-64 build cannot
-contain). It also checks the image layout, user, entrypoint, environment and
-labels. The allocator is read from `/app/BUILD-INFO`: the `musl` variant must be
-free of mimalloc, and the `mimalloc` variant must contain mimalloc **and** prove
-it is live at runtime — the script runs the binary with `MIMALLOC_VERBOSE=1`
-and `MIMALLOC_SHOW_STATS=1` (only during the check) and requires mimalloc's own
-output, rather than trusting static presence.
+`-frecord-gcc-switches` and preserved through `-s` and LTO), the ELF machine
+(asserts amd64 vs arm64 against the build's `arch`), and an instruction census:
+BMI2 and AVX instructions must be present in a `znver3` build and absent from an
+`x86-64-v2` build. It also checks the image layout, user, entrypoint,
+environment and labels. The allocator is read from `/app/BUILD-INFO`: the `musl`
+variant must be free of mimalloc, and the `mimalloc` variant must contain
+mimalloc **and** prove it is live at runtime — the script runs the binary with
+`MIMALLOC_VERBOSE=1` and `MIMALLOC_SHOW_STATS=1` (only during the check) and
+requires mimalloc's own output, rather than trusting static presence.
+
+`verify-binary.sh` can run against an arm64 image only when qemu binfmt is
+registered on the host; otherwise set `QBT_VERIFY_RUN=0` to fall back to
+static-only inspection (the binary cannot be executed).
 
 `smoke.sh` runs the image with `--read-only`, `--user 1000:1000`, tmpfs `/tmp`
 and an empty `/config`, waits for the WebUI on a non-default port, logs in with
@@ -214,15 +271,19 @@ and that `unrar`, `7zz`, `unzip` and `qbt-unpack` actually work.
 
 ## CI
 
-`.github/workflows/build.yml` runs a matrix over the two allocators on a
-self-hosted runner labelled `znver3`, one runner pod at a time
-(`max-parallel: 1`): for each of `musl` and `mimalloc` it builds, verifies,
-smoke tests, then pushes to `ghcr.io/swizzin/qbittorrent` with both tags (the
-moving tag and the `sha-<12>` tag, the latter suffixed `-mimalloc` for the
-mimalloc variant). Images are only pushed after the tests pass. The runner
-needs docker with buildx; the workflow installs `binutils` and `file` for
-`hack/verify-binary.sh` when they are missing. A runner can export
-`BUILD_JOBS` to cap compile parallelism below the default of 16.
+`.github/workflows/build.yml` builds and verifies on every branch push and on
+`workflow_dispatch`, and pushes to `ghcr.io/swizzin/qbittorrent` only from
+`main`. The matrix runs six variants on a self-hosted runner labelled `znver3`,
+one at a time (`max-parallel: 1`): the amd64 builds natively, the arm64 builds
+are cross-compiled on the amd64 runner. Each variant builds, verifies, smoke
+tests, then (on `main`) pushes its per-arch image and immutable `sha-` tag; a
+final job assembles the `base` and `10g` multi-arch manifests from the per-arch
+images. Images are only pushed after the tests pass. The runner needs docker
+with buildx, and qemu binfmt for the arm64 variants (the workflow registers and
+then verifies it, failing clearly if binfmt is not usable). The workflow
+installs `binutils` and `file` for `hack/verify-binary.sh` when they are
+missing. A runner can export `BUILD_JOBS` to cap compile parallelism below the
+default of 16.
 
 ## Licences
 
@@ -233,14 +294,14 @@ which is BSD-3-Clause, plus Qt, OpenSSL, Boost and zlib under their own
 licences. Corresponding source is the upstream release tags
 (qBittorrent `release-5.3.0`, libtorrent `v1.2.20`, and the versions of the
 other dependencies selected by the pinned build script) plus
-`patches/libtorrent/1.2.20/patch` from this repository.
+`patches/libtorrent/1.2.20/` from this repository.
 
 ## Credits
 
 The build itself is [userdocs/qbittorrent-nox-static](https://github.com/userdocs/qbittorrent-nox-static),
 which does the heavy lifting: musl toolchain, static Qt, Boost, OpenSSL and
-libtorrent. This repository only pins it, adds the libtorrent defaults patch and
-packages the result.
+libtorrent. This repository only pins it, adds the libtorrent defaults patches
+and packages the result.
 
 ## AI disclosure
 
