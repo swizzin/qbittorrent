@@ -25,6 +25,7 @@ jobs:
     # Native znver3 build: the image is compiled with -march=znver3 and is not
     # emulated, so the runner has to be a Zen 3 (or newer) machine.
     runs-on: [self-hosted, linux, x64, znver3]
+    # A capped runner (BUILD_JOBS=6) takes roughly twice the 16-job time.
     timeout-minutes: 240
     steps:
       - name: Checkout
