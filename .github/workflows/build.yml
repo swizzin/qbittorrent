@@ -47,6 +47,8 @@ jobs:
       - name: Read versions from the Dockerfile
         run: hack/versions.sh >> "${GITHUB_ENV}"
 
+      # BUILD_JOBS comes from the runner's environment when it sets one, so a
+      # runner on a shared host can cap compile parallelism without a commit.
       - name: Build
         run: |
           docker buildx build \
