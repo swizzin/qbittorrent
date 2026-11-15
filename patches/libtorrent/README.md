@@ -1,4 +1,29 @@
-# libtorrent 1.2.20 compiled defaults
+# libtorrent compiled defaults
+
+This repository carries one compiled-defaults patch pair per libtorrent line it
+builds. Each pair is generated from that line's own tagged
+`src/settings_pack.cpp`; a patch against one line does not apply to the other
+(`cache_size`, `cache_expiry` and `coalesce_*` are `DEPRECATED_SET` on 2.x, and
+the context lines differ).
+
+| directory | libtorrent line | application | profiles |
+|---|---|---|---|
+| `1.2.20/` | `v1.2.20` | qBittorrent 5.3.0 | `patch` = `10g`, `base.patch` = `base` |
+| `2.1.2/` | `v2.1.2` | qBittorrent 5.3.0 | `patch` = `10g`, `base.patch` = `base` |
+
+The directory name must match what `qbittorrent-nox-static.sh -lt v<version>`
+creates (`qbt-build/patches/libtorrent/<version>/`). The Dockerfile stages
+exactly one of a line's two files into that path, chosen by the `PROFILE` build
+arg — the script would otherwise merge every `*.patch`/`*.diff` file in the
+directory, so the two files must not both land there. The `LT_VERSION` build arg
+selects the line; `hack/versions.sh` refuses a version this directory tree has
+no patch pair for.
+
+Each line has its own detail; the 2.1 line's is in
+[`2.1.2/README.md`](2.1.2/README.md), including why the 2.x disk settings are
+not in it.
+
+## libtorrent 1.2.20
 
 Two patch files in `1.2.20/`, both generated from the tagged `v1.2.20`
 `src/settings_pack.cpp` and applied by the build script as
@@ -9,12 +34,8 @@ Two patch files in `1.2.20/`, both generated from the tagged `v1.2.20`
 | `1.2.20/patch` | `10g` | six `SET(...)` defaults (the 10g build) |
 | `1.2.20/base.patch` | `base` | the same six except the two that scale with the box |
 
-The directory name matches what `qbittorrent-nox-static.sh -lt v1.2.20` expects
-(`qbt-build/patches/libtorrent/1.2.20/patch`). The Dockerfile stages exactly one
-of the two files into that path, chosen by the `PROFILE` build arg — the script
-would otherwise merge every `*.patch` file it finds in the directory, so the two
-files must not both land there. Upstream ships no libtorrent 1.2.20 patch of its
-own, so nothing is layered on the same file.
+Upstream ships no libtorrent 1.2.20 patch of its own, so nothing is layered on
+the same file.
 
 Generated from the tagged source, not by hand; both `git apply --check -p1` and
 `patch -p1 --dry-run` pass against a pristine `v1.2.20` tree.
@@ -87,6 +108,23 @@ not compiled.
   profile compiled into everyone's install, and qBittorrent owns those values
   anyway.
 
+## libtorrent 2.1.2
+
+Two patch files in `2.1.2/`, generated from the tagged `v2.1.2`
+`src/settings_pack.cpp` for `qbittorrent-nox-static.sh -lt v2.1.2`. Same intent
+and the same base/10g split as the 1.2.20 pair: `request_timeout`,
+`whole_pieces_threshold`, `torrent_connect_boost` and
+`predictive_piece_announce` in both, and only `send_not_sent_low_watermark` and
+`max_peer_recv_buffer_size` scaled by the profile.
+
+The 2.x disk settings are deliberately absent: qBittorrent sets `aio_threads`,
+`hashing_threads`, `max_queued_disk_bytes`, `disk_io_read_mode`,
+`disk_io_write_mode`, `mmap_file_size_cutoff` and `disk_write_mode` from its own
+preferences, and posix-vs-mmap is its disk I/O constructor, not a setting.
+`cache_size`, `cache_expiry`, `coalesce_reads` and `coalesce_writes` are
+`DEPRECATED_SET` on this branch. [`2.1.2/README.md`](2.1.2/README.md) has the
+table and the reasoning.
+
 ## Lessons from the previous custom build
 
 - **Assert the allocator is actually linked.** A build that installed gperftools
@@ -110,16 +148,17 @@ not compiled.
 
 Check whether userdocs' own patch set for that libtorrent version touches
 `src/settings_pack.cpp`; if it does, fold the two together rather than layering
-a second patch on the same file. (Upstream ships no 1.2.20 patch, so this does
-not apply today.)
+a second patch on the same file. (Upstream ships no 1.2.20 or 2.1.2 patch, so
+this does not apply today.)
 
 ## Runtime settings that go with the 10g build
 
-Recommended `qBittorrent.conf` values for the 10g profile. They are a starting
-point written once, never re-applied: a user changing them is not drift. The
-base profile's runtime presets are the stock qBittorrent defaults with a lower
-send-buffer watermark (see above); only these compiled values are fixed at build
-time, nothing here is.
+Recommended `qBittorrent.conf` values for the 10g profile on the 1.2.20 line.
+The 2.1 line's table is in [`2.1.2/README.md`](2.1.2/README.md). They are a
+starting point written once, never re-applied: a user changing them is not
+drift. The base profile's runtime presets are the stock qBittorrent defaults
+with a lower send-buffer watermark (see above); only these compiled values are
+fixed at build time, nothing here is.
 
 | key | value |
 |---|---|
