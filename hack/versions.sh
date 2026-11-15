@@ -20,13 +20,14 @@
 #
 # Two names are derived from the axes:
 #
-#   VARIANT      base | 10g | 10g-znver3 | 10g-znver3-mimalloc
-#   IMAGE_TAG    <qbt>-lt<lt>[-10g][-znver3][-mimalloc]
+#   SUFFIX       "" | -10g | -10g-znver3 | -10g-znver3-mimalloc
+#   IMAGE_TAG    <qbt>-lt<lt><SUFFIX>
 #
-# VARIANT is the variant for immutable tags, which carry the libtorrent line as
-# well as the axis suffixes: sha-<12>-lt<lt>-<variant>, and a single image adds
+# The default profile has no name in any tag: the image people pull by default
+# is just <qbt>-lt<lt>. Immutable tags carry the same suffix after this commit
+# and the libtorrent line, sha-<12>-lt<lt><SUFFIX>, and a single image adds
 # -<arch> (see the README's tags table). ARCH deliberately never appears in
-# IMAGE_TAG: the base and 10g baseline tags are multi-arch manifests that
+# IMAGE_TAG: the default and 10g baseline tags are multi-arch manifests that
 # combine amd64 and arm64 under one name.
 
 set -euo pipefail
@@ -95,10 +96,6 @@ if [[ ${allocator} == "mimalloc" ]] \
     exit 1
 fi
 
-variant="${profile}"
-[[ ${march} == "znver3" ]] && variant="${variant}-znver3"
-[[ ${allocator} == "mimalloc" ]] && variant="${variant}-mimalloc"
-
 suffix=""
 [[ ${profile} == "10g" ]] && suffix="-10g"
 [[ ${march} == "znver3" ]] && suffix="${suffix}-znver3"
@@ -112,7 +109,9 @@ printf 'PROFILE=%q\n' "${profile}"
 printf 'MARCH=%q\n' "${march}"
 printf 'ARCH=%q\n' "${arch}"
 printf 'ALLOCATOR=%q\n' "${allocator}"
-printf 'VARIANT=%q\n' "${variant}"
+# Not %q: an empty suffix would print as '' and GITHUB_ENV takes it literally.
+# The suffix is only ever -, letters and digits.
+printf 'SUFFIX=%s\n' "${suffix}"
 printf 'MIMALLOC_TAG=%q\n' "$(arg MIMALLOC_TAG)"
 printf 'MIMALLOC_SHA256=%q\n' "$(arg MIMALLOC_SHA256)"
 printf 'IMAGE_TAG=%q\n' "${qbt}-lt${lt}${suffix}"

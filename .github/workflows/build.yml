@@ -71,17 +71,17 @@ jobs:
         include:
           # libtorrent 1.2.20 — the line the A/B pair and the znver3 images
           # started on. These tags must not move or change shape.
-          # base profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
-          - { name: lt1.2.20-base-amd64,          lt: 1.2.20, profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
-          - { name: lt1.2.20-base-arm64,          lt: 1.2.20, profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
+          # default profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
+          - { name: lt1.2.20-amd64,               lt: 1.2.20, profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: lt1.2.20-arm64,               lt: 1.2.20, profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
           # 10g profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
           - { name: lt1.2.20-10g-amd64,           lt: 1.2.20, profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
           - { name: lt1.2.20-10g-arm64,           lt: 1.2.20, profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
-          # libtorrent 2.1.2 — the 2.1 line's base and 10g baselines. No mimalloc
+          # libtorrent 2.1.2 — the 2.1 line's default and 10g baselines. No mimalloc
           # (the allocator A/B is a 1.2.20 experiment); its znver3 single image
           # is in the job below with the other self-hosted legs.
-          - { name: lt2.1.2-base-amd64,           lt: 2.1.2,  profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
-          - { name: lt2.1.2-base-arm64,           lt: 2.1.2,  profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
+          - { name: lt2.1.2-amd64,                lt: 2.1.2,  profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: lt2.1.2-arm64,                lt: 2.1.2,  profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
           - { name: lt2.1.2-10g-amd64,            lt: 2.1.2,  profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
           - { name: lt2.1.2-10g-arm64,            lt: 2.1.2,  profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
     with:
@@ -169,7 +169,7 @@ jobs:
           add() {
             eval "$(hack/versions.sh musl "$1" x86-64-v2 amd64 "$2")"
             moving+=("${IMAGE_TAG}")
-            immutable+=("sha-${SHA}-lt${LT_VERSION}-${VARIANT}")
+            immutable+=("sha-${SHA}-lt${LT_VERSION}${SUFFIX}")
           }
           add base 1.2.20
           add 10g 1.2.20

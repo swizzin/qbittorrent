@@ -131,19 +131,19 @@ jobs:
 
       # Two tags per leg, one scheme for all of them (README, "Tags"):
       #
-      #   immutable  sha-<12>-lt<lt>-<variant>[-<arch>]   this commit, this variant
-      #   moving     <qbt>-lt<lt>[-10g][-znver3][-mimalloc]   the variant
+      #   immutable  sha-<12>-lt<lt>[-10g][-znver3][-mimalloc][-<arch>]   this commit
+      #   moving     <qbt>-lt<lt>[-10g][-znver3][-mimalloc]
       #
       # A tag with no arch suffix is a multi-arch manifest, which the manifest
       # job assembles; the multi-arch legs push their moving tag per arch so it
       # has something to assemble. The immutable tag carries the libtorrent line
-      # as well as the variant, because both lines build a `base` and a `10g`
-      # variant and would otherwise collide on every commit. No two legs can
+      # as well as the suffix, because both lines build a default and a `10g`
+      # image and would otherwise collide on every commit. No two legs can
       # assemble the same immutable name, and one line's tag never names another
       # line's image.
       - name: Compute the push tags
         run: |
-          IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-lt${LT_VERSION}-${VARIANT}-${ARCH}"
+          IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-lt${LT_VERSION}${SUFFIX}-${ARCH}"
           if [ "${{ inputs.multi }}" = "true" ]; then
             PUSH_TAG="${IMAGE_TAG}-${ARCH}"
           else

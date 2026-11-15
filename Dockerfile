@@ -385,13 +385,12 @@ ARG TARGETPLATFORM
 ARG QBT_VERSION
 ARG LT_VERSION
 ARG MARCH=znver3
-ARG PROFILE=10g
 ARG ALLOCATOR=musl
 
 LABEL org.opencontainers.image.source="https://github.com/swizzin/qbittorrent" \
       org.opencontainers.image.licenses="Apache-2.0 AND GPL-3.0-or-later" \
       org.opencontainers.image.version="${QBT_VERSION}" \
-      org.opencontainers.image.description="qBittorrent ${QBT_VERSION} on libtorrent ${LT_VERSION}, static musl, ${PROFILE} libtorrent defaults, compiled for ${MARCH}, ${ALLOCATOR} malloc"
+      org.opencontainers.image.description="qBittorrent ${QBT_VERSION} on libtorrent ${LT_VERSION}, static musl, compiled for ${MARCH}, ${ALLOCATOR} malloc"
 
 # The runtime tools. Versions are not pinned here either: like the build stage,
 # apk takes them from the Alpine release branch's index at build time, and the

@@ -4,8 +4,8 @@ A container image of qBittorrent, built from source, in two libtorrent lines
 side by side: **qBittorrent 5.3.0** on **libtorrent 1.2.20** and on
 **libtorrent 2.1.2**, both statically linked against musl.
 
-Each line is built in two compiled libtorrent profiles — **`base`** (safe on the
-smallest box) and **`10g`** (tuned for a 10 Gbit seedbox) — across two targets:
+Each line is built in two compiled libtorrent profiles — the **default** (safe on
+the smallest box; `PROFILE=base` to the build) and **`10g`** (tuned for a 10 Gbit seedbox) — across two targets:
 **amd64** (baseline `x86-64-v2` or `znver3`) and **arm64** (`aarch64`,
 cross-compiled). Each line also has its own compiled-defaults patch pair, because
 a 1.2 patch does not apply to 2.x. On the 1.2.20 line the allocator is a further
@@ -30,24 +30,25 @@ image; a tag with no architecture is a multi-arch **manifest** over those images
 
 | tag | what it is |
 |---|---|
-| `5.3.0-lt1.2.20` | moving, libtorrent 1.2.20, `base` profile: multi-arch **manifest** (amd64 + arm64) |
+| `5.3.0-lt1.2.20` | moving, libtorrent 1.2.20, default profile: multi-arch **manifest** (amd64 + arm64) |
 | `5.3.0-lt1.2.20-10g` | moving, 1.2.20, `10g` profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
 | `5.3.0-lt1.2.20-10g-znver3` | moving, 1.2.20, `10g` profile, `znver3` amd64, `musl`: single image |
 | `5.3.0-lt1.2.20-10g-znver3-mimalloc` | moving, 1.2.20, `10g` profile, `znver3` amd64, `mimalloc`: single image |
-| `5.3.0-lt2.1.2` | moving, libtorrent 2.1.2, `base` profile: multi-arch **manifest** (amd64 + arm64) |
+| `5.3.0-lt2.1.2` | moving, libtorrent 2.1.2, default profile: multi-arch **manifest** (amd64 + arm64) |
 | `5.3.0-lt2.1.2-10g` | moving, 2.1.2, `10g` profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
 | `5.3.0-lt2.1.2-10g-znver3` | moving, 2.1.2, `10g` profile, `znver3` amd64, `musl`: single image |
-| `sha-<12>-lt<lt>-base` | immutable, this commit's `base` **manifest** for that libtorrent line |
+| `sha-<12>-lt<lt>` | immutable, this commit's default **manifest** for that libtorrent line |
 | `sha-<12>-lt<lt>-10g` | immutable, this commit's `10g` baseline **manifest** for that line |
-| `sha-<12>-lt<lt>-<variant>-<arch>` | immutable single image: `sha-<12>-lt1.2.20-base-amd64`, `sha-<12>-lt2.1.2-10g-arm64`, `sha-<12>-lt1.2.20-10g-znver3-amd64`, `sha-<12>-lt1.2.20-10g-znver3-mimalloc-amd64` |
+| `sha-<12>-lt<lt><suffix>-<arch>` | immutable single image: `sha-<12>-lt1.2.20-amd64`, `sha-<12>-lt2.1.2-10g-arm64`, `sha-<12>-lt1.2.20-10g-znver3-amd64`, `sha-<12>-lt1.2.20-10g-znver3-mimalloc-amd64` |
 
 `<12>` is the first 12 hex digits of the commit, `<lt>` is the libtorrent line
-(`1.2.20` or `2.1.2`), and `<variant>` is `base`, `10g`, `10g-znver3` or
-`10g-znver3-mimalloc`. Every immutable tag is `sha-<12>-lt<lt>-<variant>`; a
+(`1.2.20` or `2.1.2`), and `<suffix>` is nothing for the default profile, or
+`-10g`, `-10g-znver3` or `-10g-znver3-mimalloc`: the default image is never
+named by its profile. Every immutable tag is `sha-<12>-lt<lt><suffix>`; a
 single image appends its architecture to that, so no two matrix legs can ever
 assemble the same immutable name and one line's tag never names another line's
 image. The immutable tags carry the libtorrent line because both lines build a
-`base` and a `10g` variant of every commit; without it they would collide. The
+default and a `10g` image of every commit; without it they would collide. The
 1.2.20 moving tags above are unchanged from before the 2.1 line existed.
 
 The per-arch images a manifest is assembled from are pushed under the moving tag
@@ -93,7 +94,7 @@ instruction census (BMI2/AVX present in a `znver3` build, absent from an
 | 2.1.2 | 10g | baseline | arm64 | musl | `5.3.0-lt2.1.2-10g` |
 | 2.1.2 | 10g | znver3 | amd64 | musl | `5.3.0-lt2.1.2-10g-znver3` |
 
-`base` and `10g` differ only in two compile-only libtorrent defaults
+The default and `10g` profiles differ only in two compile-only libtorrent defaults
 (`send_not_sent_low_watermark` and `max_peer_recv_buffer_size`); four other
 tunings are shared. The two libtorrent lines share that intent but each has its
 own patch pair, generated from its own tag. The runtime profiles
@@ -374,7 +375,7 @@ builds, verifies, smoke tests and — on `main` — pushes and signs one variant
 The eight legs that run on GitHub-hosted runners do so in parallel, so a push
 waits for the longest build rather than the sum of all eleven; the three znver3
 legs share the one self-hosted runner and run one at a time (`max-parallel: 1`).
-A final job waits for both and assembles the `base` and `10g` multi-arch
+A final job waits for both and assembles the default and `10g` multi-arch
 manifests of both lines from the per-arch images. Images are only pushed after
 the checks pass.
 
@@ -382,8 +383,8 @@ Where a variant runs follows from its CPU target:
 
 | legs | runner | why |
 |---|---|---|
-| `*-base-amd64`, `*-10g-amd64` (`x86-64-v2`) | `ubuntu-24.04` | the baseline ISA: builds and runs on any x86-64 host |
-| `*-base-arm64`, `*-10g-arm64` (`armv8-a`) | `ubuntu-24.04-arm` | native arm64: the runtime image and the smoke test are arm64 code, so nothing is emulated |
+| `lt<lt>-amd64`, `lt<lt>-10g-amd64` (`x86-64-v2`) | `ubuntu-24.04` | the baseline ISA: builds and runs on any x86-64 host |
+| `lt<lt>-arm64`, `lt<lt>-10g-arm64` (`armv8-a`) | `ubuntu-24.04-arm` | native arm64: the runtime image and the smoke test are arm64 code, so nothing is emulated |
 | `lt1.2.20-10g-znver3-musl`, `lt1.2.20-10g-znver3-mimalloc`, `lt2.1.2-10g-znver3-musl` | self-hosted, labelled `znver3` | a `znver3` binary dies with SIGILL on any other CPU, so its smoke test needs the target |
 
 The `lt2.1.2` legs are the two baselines plus 10g-znver3; there is no 2.1
