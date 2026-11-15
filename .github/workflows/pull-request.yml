@@ -134,11 +134,33 @@ jobs:
             "${ten_arm64}" "${ten_znver3}" "${ten_mimalloc}" | sort -u | wc -l)
           [[ ${distinct} -eq 4 ]]
 
-          # A bad axis is an error, not a silent fallback.
-          if hack/versions.sh nope 10g x86-64-v2 amd64 >/dev/null 2>&1; then
-            printf 'versions.sh accepted an unknown allocator\n' >&2
-            exit 1
-          fi
+          # A bad axis is an error, not a silent fallback: versions.sh validates
+          # the same combinations the Dockerfile does, so it cannot assemble a tag
+          # that names something the build will refuse.
+          bad() {
+            if hack/versions.sh "$@" >/dev/null 2>&1; then
+              printf 'versions.sh accepted: %s\n' "$*" >&2
+              exit 1
+            fi
+          }
+          bad nope 10g x86-64-v2 amd64        # unknown allocator
+          bad musl nah x86-64-v2 amd64        # unknown profile
+          bad musl 10g znver4 amd64           # unknown march
+          bad musl 10g znver3 arm64           # arm64 is compiled for armv8-a; MARCH is ignored there
+          bad musl base armv8-a amd64         # armv8-a is not an amd64 target
+          bad mimalloc base x86-64-v2 amd64   # mimalloc is the 10g-znver3 amd64 line only
+
+          # The immutable tag is sha-<12>-<variant>[-<arch>], so the variants have
+          # to stay four distinct names.
+          variant() { ( eval "$(hack/versions.sh "$@")"; printf '%s\n' "${VARIANT}" ); }
+          variants=$(printf '%s\n' \
+            "$(variant musl base x86-64-v2 amd64)" \
+            "$(variant musl base armv8-a arm64)" \
+            "$(variant musl 10g x86-64-v2 amd64)" \
+            "$(variant musl 10g armv8-a arm64)" \
+            "$(variant musl 10g znver3 amd64)" \
+            "$(variant mimalloc 10g znver3 amd64)" | sort -u | wc -l)
+          [[ ${variants} -eq 4 ]]
 
           printf 'tag scheme ok:\n'
           printf '  %s\n' "${base_amd64}" "${ten_amd64}" "${ten_znver3}" "${ten_mimalloc}"

@@ -88,22 +88,27 @@ jobs:
       - name: Read versions from the Dockerfile
         run: hack/versions.sh "${{ matrix.allocator }}" "${{ matrix.profile }}" "${{ matrix.march }}" "${{ matrix.arch }}" >> "${GITHUB_ENV}"
 
-      # The moving tag is per-arch for the multi-arch variants (the manifest is
-      # assembled from those), and direct for the single-arch znver3 line. The
-      # immutable sha tag is suffixed per variant so it is unique.
+      # Two tags per leg, one scheme for all of them (README, "Tags"):
+      #
+      #   immutable  sha-<12>-<variant>[-<arch>]   this commit, this variant
+      #   moving     <qbt>-lt<lt>[-10g][-znver3][-mimalloc]   the variant
+      #
+      # A tag with no arch suffix is a multi-arch manifest, which the manifest
+      # job assembles; the multi-arch legs push their moving tag per arch so it
+      # has something to assemble. No two legs can assemble the same immutable
+      # name: the variant already carries the profile, the microarchitecture and
+      # the allocator, and the arch is appended to it.
       - name: Compute the push tags
         run: |
+          IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-${VARIANT}-${ARCH}"
           if [ "${{ matrix.multi }}" = "true" ]; then
             PUSH_TAG="${IMAGE_TAG}-${ARCH}"
-            SHA_TAG="sha-${GITHUB_SHA::12}-${PROFILE}-${ARCH}"
           else
             PUSH_TAG="${IMAGE_TAG}"
-            SHA_TAG="sha-${GITHUB_SHA::12}"
-            if [ "${ALLOCATOR}" = "mimalloc" ]; then SHA_TAG="${SHA_TAG}-mimalloc"; fi
           fi
           {
             echo "PUSH_TAG=${PUSH_TAG}"
-            echo "SHA_TAG=${SHA_TAG}"
+            echo "IMMUTABLE_TAG=${IMMUTABLE_TAG}"
           } >> "${GITHUB_ENV}"
 
       # BUILD_JOBS is the compile parallelism, and this build is memory-hungry
@@ -143,10 +148,18 @@ jobs:
       - name: Push
         if: github.ref == 'refs/heads/main'
         run: |
+          # An immutable tag is never re-pushed: if this commit's tag is already
+          # in the registry, something is published under that name and this
+          # build must not change the image behind it. The moving tags are the
+          # ones that move.
+          if docker buildx imagetools inspect "${IMAGE}:${IMMUTABLE_TAG}" >/dev/null 2>&1; then
+            printf 'refusing to re-push immutable tag %s: it already exists\n' "${IMMUTABLE_TAG}" >&2
+            exit 1
+          fi
           docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${PUSH_TAG}"
-          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${SHA_TAG}"
+          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${IMMUTABLE_TAG}"
           docker push "${IMAGE}:${PUSH_TAG}"
-          docker push "${IMAGE}:${SHA_TAG}"
+          docker push "${IMAGE}:${IMMUTABLE_TAG}"
 
   manifest:
     name: assemble multi-arch manifests
@@ -172,31 +185,41 @@ jobs:
 
       - name: Compute manifest tags
         run: |
+          SHA="${GITHUB_SHA::12}"
           eval "$(hack/versions.sh musl base x86-64-v2 amd64)"
           BASE_TAG="${IMAGE_TAG}"
+          BASE_IMMUTABLE="sha-${SHA}-${VARIANT}"
           eval "$(hack/versions.sh musl 10g x86-64-v2 amd64)"
           TENG_TAG="${IMAGE_TAG}"
-          SHA="${GITHUB_SHA::12}"
+          TENG_IMMUTABLE="sha-${SHA}-${VARIANT}"
           {
             echo "BASE_TAG=${BASE_TAG}"
+            echo "BASE_IMMUTABLE=${BASE_IMMUTABLE}"
             echo "TENG_TAG=${TENG_TAG}"
-            echo "SHA=${SHA}"
+            echo "TENG_IMMUTABLE=${TENG_IMMUTABLE}"
           } >> "${GITHUB_ENV}"
 
       - name: Assemble manifests
         run: |
-          set -eux
-          # Moving multi-arch tags (base and 10g baseline) over amd64 + arm64.
-          docker buildx imagetools create \
-            --tag "${IMAGE}:${BASE_TAG}" \
-            "${IMAGE}:${BASE_TAG}-amd64" "${IMAGE}:${BASE_TAG}-arm64"
-          docker buildx imagetools create \
-            --tag "${IMAGE}:${TENG_TAG}" \
-            "${IMAGE}:${TENG_TAG}-amd64" "${IMAGE}:${TENG_TAG}-arm64"
-          # Immutable per-commit multi-arch manifests.
-          docker buildx imagetools create \
-            --tag "${IMAGE}:sha-${SHA}-base" \
-            "${IMAGE}:sha-${SHA}-base-amd64" "${IMAGE}:sha-${SHA}-base-arm64"
-          docker buildx imagetools create \
-            --tag "${IMAGE}:sha-${SHA}-10g" \
-            "${IMAGE}:sha-${SHA}-10g-amd64" "${IMAGE}:sha-${SHA}-10g-arm64"
+          set -eu
+          # <tag>-amd64 and <tag>-arm64 become the multi-arch manifest <tag>.
+          assemble() {
+            docker buildx imagetools create --tag "${IMAGE}:${1}" \
+              "${IMAGE}:${1}-amd64" "${IMAGE}:${1}-arm64"
+          }
+
+          # The moving manifests are re-pointed at this commit's per-arch images
+          # on every push to main.
+          assemble "${BASE_TAG}"
+          assemble "${TENG_TAG}"
+
+          # The immutable manifests are created once. Both are checked before
+          # either is created, so a refusal leaves the registry as it was.
+          for tag in "${BASE_IMMUTABLE}" "${TENG_IMMUTABLE}"; do
+            if docker buildx imagetools inspect "${IMAGE}:${tag}" >/dev/null 2>&1; then
+              printf 'refusing to re-push immutable tag %s: it already exists\n' "${tag}" >&2
+              exit 1
+            fi
+          done
+          assemble "${BASE_IMMUTABLE}"
+          assemble "${TENG_IMMUTABLE}"

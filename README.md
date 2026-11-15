@@ -16,20 +16,39 @@ with a read-only root filesystem.
 
 ## Tags
 
-| tag | meaning |
-|---|---|
-| `5.3.0-lt1.2.20` | moving tag, `base` profile, multi-arch manifest (amd64 + arm64) |
-| `5.3.0-lt1.2.20-10g` | moving tag, `10g` profile, baseline CPU, multi-arch manifest (amd64 + arm64) |
-| `5.3.0-lt1.2.20-10g-znver3` | moving tag, `10g` profile, `znver3` amd64, `musl` |
-| `5.3.0-lt1.2.20-10g-znver3-mimalloc` | moving tag, `10g` profile, `znver3` amd64, `mimalloc` |
-| `sha-<12 hex>` | immutable tag for the commit (`10g-znver3` musl) |
-| `sha-<12 hex>-mimalloc` | immutable tag for the commit (`10g-znver3` mimalloc) |
-| `sha-<12 hex>-base` | immutable multi-arch manifest for the commit (`base`) |
-| `sha-<12 hex>-10g` | immutable multi-arch manifest for the commit (`10g` baseline) |
+Two kinds of tag. A **moving** tag names a variant and is re-pointed at the
+latest build of it. An **immutable** tag names one build of one commit and is
+never re-pushed: the jobs refuse to overwrite one, so `sha-…` always means the
+same image.
 
-The multi-arch tags are assembled from per-arch images that are also pushed, as
-`<tag>-amd64` and `<tag>-arm64`; those are build artefacts the manifest is made
-from, not intended for pinning.
+A tag whose last element is an architecture (`-amd64`, `-arm64`) is a single
+image; a tag with no architecture is a multi-arch **manifest** over those images.
+
+| tag | what it is |
+|---|---|
+| `5.3.0-lt1.2.20` | moving, `base` profile: multi-arch **manifest** (amd64 + arm64) |
+| `5.3.0-lt1.2.20-10g` | moving, `10g` profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
+| `5.3.0-lt1.2.20-10g-znver3` | moving, `10g` profile, `znver3` amd64, `musl`: single image |
+| `5.3.0-lt1.2.20-10g-znver3-mimalloc` | moving, `10g` profile, `znver3` amd64, `mimalloc`: single image |
+| `sha-<12>-base` | immutable, this commit's `base` **manifest** (amd64 + arm64) |
+| `sha-<12>-10g` | immutable, this commit's `10g` baseline **manifest** (amd64 + arm64) |
+| `sha-<12>-<variant>-<arch>` | immutable single image: `sha-<12>-base-amd64`, `sha-<12>-10g-arm64`, `sha-<12>-10g-znver3-amd64`, `sha-<12>-10g-znver3-mimalloc-amd64` |
+
+`<12>` is the first 12 hex digits of the commit, and `<variant>` is `base`,
+`10g`, `10g-znver3` or `10g-znver3-mimalloc`. Every immutable tag is
+`sha-<12>-<variant>`; a single image appends its architecture to that, so no two
+matrix legs can ever assemble the same immutable name and one profile's tag
+never names another profile's image.
+
+The per-arch images a manifest is assembled from are pushed under the moving tag
+per arch, as `<tag>-amd64` and `<tag>-arm64`. Those are the manifest's inputs,
+re-pointed on every push, and not intended for pinning.
+
+Pin by digest when the image itself has to stay the same:
+
+```sh
+docker pull ghcr.io/swizzin/qbittorrent@sha256:<digest>
+```
 
 ## CPU requirement
 
