@@ -59,11 +59,12 @@ ARG UNRAR_IMAGE=ghcr.io/linuxserver/unrar@sha256:48c0ce2609bb3c35764956bbd9395e9
 # emulated build. The runtime stage below is the target platform.
 FROM --platform=${BUILDPLATFORM} ${ALPINE_IMAGE} AS build
 
-# buildx provides these platform ARGs; the defaults keep a plain `docker build`
-# (legacy builder) on amd64 working.
-ARG BUILDPLATFORM=linux/amd64
-ARG TARGETPLATFORM=linux/amd64
-ARG TARGETARCH=amd64
+# BuildKit fills these in from --platform. They carry no default on purpose: a
+# default here wins over BuildKit's value, so an arm64 build would see amd64
+# and take the amd64 branches below.
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+ARG TARGETARCH
 
 # Microarchitecture target for amd64. This is the single knob for a baseline
 # build:
@@ -380,7 +381,7 @@ FROM --platform=${TARGETPLATFORM} ${UNRAR_IMAGE} AS unrar
 
 FROM --platform=${TARGETPLATFORM} ${ALPINE_IMAGE} AS runtime
 
-ARG TARGETPLATFORM=linux/amd64
+ARG TARGETPLATFORM
 ARG QBT_VERSION
 ARG LT_VERSION
 ARG MARCH=znver3
