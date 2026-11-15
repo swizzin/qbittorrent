@@ -342,16 +342,23 @@ and that `unrar`, `7zz`, `unzip` and `qbt-unpack` actually work.
 Every image and manifest pushed to `ghcr.io/swizzin/qbittorrent` is signed with
 [cosign](https://github.com/sigstore/cosign) in keyless mode: the signature
 carries a short-lived certificate from GitHub's OIDC issuer that names this
-repository, the build workflow and the commit, so there is no long-lived signing
-key to hold or leak, and a signature can only have been made by a build of this
-workflow.
+repository, the workflow that built it and the commit, so there is no long-lived
+signing key to hold or leak, and a signature can only have been made by a build
+of this project.
 
 ```sh
 cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity https://github.com/swizzin/qbittorrent/.github/workflows/build.yml@refs/heads/main \
+  --certificate-identity-regexp '^https://github\.com/swizzin/qbittorrent/\.github/workflows/(build|image)\.yml@refs/heads/main$' \
   ghcr.io/swizzin/qbittorrent@sha256:<digest>
 ```
+
+Two workflow files appear in that identity, which is not slack: GitHub's OIDC
+token names the workflow a job actually ran in, and a variant's per-arch image
+is built by the reusable `.github/workflows/image.yml` while the manifest
+assembled from those images is created by `.github/workflows/build.yml`. Only
+`build.yml` can start either of them, and only on `main` (see "CI"), so the
+pattern admits nothing a fork or a pull request could mint.
 
 Verify the digest, not the moving tag: the signature is a claim about an image,
 and the moving tags are re-pointed on the next push while the digest keeps
@@ -361,11 +368,15 @@ naming the same bytes.
 
 `.github/workflows/build.yml` builds and verifies on every push to `main` and on
 `workflow_dispatch`, and pushes to `ghcr.io/swizzin/qbittorrent` only from
-`main`. The matrix runs eleven variants, one at a time (`max-parallel: 1`): six
-on libtorrent 1.2.20 and five on 2.1.2. Each variant builds, verifies and smoke
-tests, then pushes its per-arch image and an immutable tag; a final job
-assembles the `base` and `10g` multi-arch manifests of both lines from the
-per-arch images. Images are only pushed after the checks pass.
+`main`. It runs eleven variants: six on libtorrent 1.2.20 and five on 2.1.2,
+each leg handed to `.github/workflows/image.yml`, the reusable workflow that
+builds, verifies, smoke tests and — on `main` — pushes and signs one variant.
+The eight legs that run on GitHub-hosted runners do so in parallel, so a push
+waits for the longest build rather than the sum of all eleven; the three znver3
+legs share the one self-hosted runner and run one at a time (`max-parallel: 1`).
+A final job waits for both and assembles the `base` and `10g` multi-arch
+manifests of both lines from the per-arch images. Images are only pushed after
+the checks pass.
 
 Where a variant runs follows from its CPU target:
 

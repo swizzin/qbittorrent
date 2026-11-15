@@ -9,6 +9,11 @@ on:
   # pull_request or pull_request_target to this file: pull requests are
   # checked by .github/workflows/pull-request.yml, which is hosted-runner only
   # and builds nothing, because a fork must never reach the self-hosted runner.
+  #
+  # The boundary covers two files: the legs themselves run in the reusable
+  # .github/workflows/image.yml, which has no triggers of its own (`on:
+  # workflow_call` only) and so cannot be started by anything but this
+  # workflow.
   push:
     branches:
       - main
@@ -28,27 +33,40 @@ env:
   IMAGE: ghcr.io/swizzin/qbittorrent
 
 jobs:
-  image:
+  # Eleven legs, split by where they can run, each leg handed to
+  # .github/workflows/image.yml.
+  #
+  # Where a variant runs is part of the matrix. The baseline builds (x86-64-v2
+  # amd64, armv8-a arm64) run natively on GitHub-hosted runners, so they need
+  # no binfmt anywhere and can be reproduced without this project's hardware;
+  # those eight legs run in parallel, because nothing about them competes for a
+  # single machine.
+  #
+  # The znver3 legs stay on the self-hosted runner, the only machine known to
+  # be Zen 3. Those binaries use AVX2/BMI2, so running their smoke test on an
+  # Intel or an older AMD host is a SIGILL, not a test. There is one such
+  # runner, so its three legs run one at a time (`max-parallel: 1`); that limit
+  # is why the legs are split across two jobs instead of sharing one matrix,
+  # where it would serialize the hosted legs as well and make a push take the
+  # sum of all eleven.
+  #
+  # Two libtorrent lines are built: 1.2.20 (six legs, including the allocator
+  # A/B) and 2.1.2 (five legs, musl only). Each line's baseline legs are one
+  # multi-arch manifest over amd64 and arm64; its 10g-znver3 leg is a single
+  # image. Which job a leg lands in changes none of that.
+  image-hosted:
     name: build, verify, push (${{ matrix.name }})
-    # Where a variant runs is part of the matrix. The baseline builds (x86-64-v2
-    # amd64, armv8-a arm64) run natively on GitHub-hosted runners, so they need
-    # no binfmt anywhere and can be reproduced without this project's hardware.
-    # Time is not the limit there: the build takes 18.6 minutes at 6 parallel
-    # jobs on the project's runner, against a 6-hour job limit, so 4 vCPUs is
-    # still nowhere near it; disk (~20 GiB) is the constraint to watch.
-    #
-    # The znver3 legs stay on the self-hosted runner, the only machine known to
-    # be Zen 3. Those binaries use AVX2/BMI2, so running their smoke test on an
-    # Intel or an older AMD host is a SIGILL, not a test.
-    #
-    # Two libtorrent lines are built: 1.2.20 (six legs, including the allocator
-    # A/B) and 2.1.2 (five legs, musl only). Each line's baseline legs are one
-    # multi-arch manifest over amd64 and arm64; its 10g-znver3 leg is a single
-    # image.
-    runs-on: ${{ matrix.runs_on }}
+    uses: ./.github/workflows/image.yml
+    # A called workflow can never hold more than its caller grants, so the
+    # permission set the leg needs is granted here: packages: write to push and
+    # id-token: write for keyless signing. The manifest job grants the same, and
+    # it is the only other job that pushes.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         include:
           # libtorrent 1.2.20 — the line the A/B pair and the znver3 images
@@ -59,167 +77,69 @@ jobs:
           # 10g profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
           - { name: lt1.2.20-10g-amd64,           lt: 1.2.20, profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
           - { name: lt1.2.20-10g-arm64,           lt: 1.2.20, profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
-          # 10g profile, znver3 (amd64 only; the existing A/B line, unchanged)
-          - { name: lt1.2.20-10g-znver3-musl,     lt: 1.2.20, profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
-          - { name: lt1.2.20-10g-znver3-mimalloc, lt: 1.2.20, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
-          # libtorrent 2.1.2 — the 2.1 line: base and 10g baselines as manifests,
-          # plus the znver3 single image. No mimalloc (the allocator A/B is a
-          # 1.2.20 experiment).
+          # libtorrent 2.1.2 — the 2.1 line's base and 10g baselines. No mimalloc
+          # (the allocator A/B is a 1.2.20 experiment); its znver3 single image
+          # is in the job below with the other self-hosted legs.
           - { name: lt2.1.2-base-amd64,           lt: 2.1.2,  profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
           - { name: lt2.1.2-base-arm64,           lt: 2.1.2,  profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
           - { name: lt2.1.2-10g-amd64,            lt: 2.1.2,  profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
           - { name: lt2.1.2-10g-arm64,            lt: 2.1.2,  profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
-          - { name: lt2.1.2-10g-znver3-musl,      lt: 2.1.2,  profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
-    # Signing is keyless (see "Sign the pushed digests"), which is what the OIDC
-    # token is for. It is granted on this job and on the manifest job, the two
-    # that push, and nowhere else: the build job already holds packages: write,
-    # so a signature minted there claims exactly what the push already claimed.
+    with:
+      name: ${{ matrix.name }}
+      lt: ${{ matrix.lt }}
+      profile: ${{ matrix.profile }}
+      arch: ${{ matrix.arch }}
+      march: ${{ matrix.march }}
+      allocator: ${{ matrix.allocator }}
+      platform: ${{ matrix.platform }}
+      multi: ${{ matrix.multi }}
+      # A workflow input is a scalar, so the runner labels cross the boundary as
+      # JSON and image.yml hands them back to runs-on with fromJSON.
+      runs_on: ${{ toJSON(matrix.runs_on) }}
+
+  image-znver3:
+    name: build, verify, push (${{ matrix.name }})
+    uses: ./.github/workflows/image.yml
+    # The same grant as image-hosted, for the same reason: a called workflow can
+    # be given no more than its caller holds, and the leg signs what it pushes.
     permissions:
       contents: read
       packages: write
       id-token: write
-    timeout-minutes: 240
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Set up buildx
-        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
-
-      - name: Hosted-runner capacity
-        if: runner.environment == 'github-hosted'
-        run: |
-          # Printed so a build that dies on memory or disk says so in its own log.
-          # The build wants ~20 GiB of disk; the root filesystem is the tight one
-          # on these runners, so the docker root directory matters as much as /.
-          nproc
-          free -h
-          printf 'docker root: %s\n' "$(docker info --format '{{.DockerRootDir}}')"
-          df -h / "$(docker info --format '{{.DockerRootDir}}')"
-
-      - name: Host tools for the binary checks
-        run: |
-          missing=()
-          for tool in readelf objdump file strings; do
-            command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
-          done
-          if (( ${#missing[@]} )); then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq --no-install-recommends binutils file
-          fi
-
-      - name: Read versions from the Dockerfile
-        run: hack/versions.sh "${{ matrix.allocator }}" "${{ matrix.profile }}" "${{ matrix.march }}" "${{ matrix.arch }}" "${{ matrix.lt }}" >> "${GITHUB_ENV}"
-
-      # Two tags per leg, one scheme for all of them (README, "Tags"):
-      #
-      #   immutable  sha-<12>-lt<lt>-<variant>[-<arch>]   this commit, this variant
-      #   moving     <qbt>-lt<lt>[-10g][-znver3][-mimalloc]   the variant
-      #
-      # A tag with no arch suffix is a multi-arch manifest, which the manifest
-      # job assembles; the multi-arch legs push their moving tag per arch so it
-      # has something to assemble. The immutable tag carries the libtorrent line
-      # as well as the variant, because both lines build a `base` and a `10g`
-      # variant and would otherwise collide on every commit. No two legs can
-      # assemble the same immutable name, and one line's tag never names another
-      # line's image.
-      - name: Compute the push tags
-        run: |
-          IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-lt${LT_VERSION}-${VARIANT}-${ARCH}"
-          if [ "${{ matrix.multi }}" = "true" ]; then
-            PUSH_TAG="${IMAGE_TAG}-${ARCH}"
-          else
-            PUSH_TAG="${IMAGE_TAG}"
-          fi
-          {
-            echo "PUSH_TAG=${PUSH_TAG}"
-            echo "IMMUTABLE_TAG=${IMMUTABLE_TAG}"
-          } >> "${GITHUB_ENV}"
-
-      # BUILD_JOBS is the compile parallelism, and this build is memory-hungry
-      # (roughly 2 GiB per compiler process). A self-hosted runner sets it in its
-      # own environment, because its pod is the thing with a CPU and memory
-      # limit; anywhere else it is the core count, capped at the Dockerfile's
-      # default of 16.
-      - name: Build
-        run: |
-          jobs="${BUILD_JOBS:-$(nproc)}"
-          if ((jobs > 16)); then jobs=16; fi
-          docker buildx build \
-            --load \
-            --platform "${{ matrix.platform }}" \
-            --progress=plain \
-            --build-arg BUILD_JOBS="${jobs}" \
-            --build-arg LT_VERSION="${{ matrix.lt }}" \
-            --build-arg ALLOCATOR="${{ matrix.allocator }}" \
-            --build-arg PROFILE="${{ matrix.profile }}" \
-            --build-arg MARCH="${{ matrix.march }}" \
-            --tag "${IMAGE}:${IMAGE_TAG}" \
-            .
-
-      - name: Verify binary
-        run: hack/verify-binary.sh "${IMAGE}:${IMAGE_TAG}"
-
-      - name: Smoke test
-        run: hack/smoke.sh "${IMAGE}:${IMAGE_TAG}"
-
-      - name: Log in to GHCR
-        if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push
-        if: github.ref == 'refs/heads/main'
-        run: |
-          # An immutable tag is never re-pushed: if this commit's tag is already
-          # in the registry, something is published under that name and this
-          # build must not change the image behind it. The moving tags are the
-          # ones that move.
-          if docker buildx imagetools inspect "${IMAGE}:${IMMUTABLE_TAG}" >/dev/null 2>&1; then
-            printf 'refusing to re-push immutable tag %s: it already exists\n' "${IMMUTABLE_TAG}" >&2
-            exit 1
-          fi
-          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${PUSH_TAG}"
-          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${IMMUTABLE_TAG}"
-          docker push "${IMAGE}:${PUSH_TAG}"
-          docker push "${IMAGE}:${IMMUTABLE_TAG}"
-
-      - name: Install cosign
-        if: github.ref == 'refs/heads/main'
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.1
-        with:
-          # Pinned to the 2.x line: its signature lands in the registry as
-          # <digest>.sig, which is what `cosign verify` reads (README, "Verifying
-          # a published image").
-          cosign-release: 'v2.6.5'
-
-      - name: Sign the pushed digests
-        if: github.ref == 'refs/heads/main'
-        run: |
-          set -eu
-          # Keyless: cosign takes a short-lived certificate from GitHub's OIDC
-          # issuer, so the signature says "this workflow, this commit" and there
-          # is no long-lived key to hold or leak. The digest is what is signed,
-          # not the tag: the moving tags are re-pointed on the next push, and the
-          # signature is a claim about an image, not about a name.
-          digest=$(docker buildx imagetools inspect "${IMAGE}:${IMMUTABLE_TAG}" \
-            --format '{{.Manifest.Digest}}')
-          printf 'signing %s: %s\n' "${IMMUTABLE_TAG}" "${digest}"
-          cosign sign --yes "${IMAGE}@${digest}"
+    strategy:
+      fail-fast: false
+      # One runner carries the znver3 label, so these three legs queue behind
+      # each other. Only these legs pay that price; the hosted ones above run
+      # all at once.
+      max-parallel: 1
+      matrix:
+        include:
+          # 10g profile, znver3 (amd64 only; the existing A/B line, unchanged)
+          - { name: lt1.2.20-10g-znver3-musl,     lt: 1.2.20, profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+          - { name: lt1.2.20-10g-znver3-mimalloc, lt: 1.2.20, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+          # the 2.1 line's znver3 single image
+          - { name: lt2.1.2-10g-znver3-musl,      lt: 2.1.2,  profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+    with:
+      name: ${{ matrix.name }}
+      lt: ${{ matrix.lt }}
+      profile: ${{ matrix.profile }}
+      arch: ${{ matrix.arch }}
+      march: ${{ matrix.march }}
+      allocator: ${{ matrix.allocator }}
+      platform: ${{ matrix.platform }}
+      multi: ${{ matrix.multi }}
+      runs_on: ${{ toJSON(matrix.runs_on) }}
 
   manifest:
     name: assemble multi-arch manifests
-    needs: image
+    needs: [image-hosted, image-znver3]
     # Nothing here builds or runs a binary: it only creates manifest lists in
-    # the registry from the per-arch images the matrix pushed, so it needs no
+    # the registry from the per-arch images the legs pushed, so it needs no
     # CPU feature and runs on a hosted runner like the baseline legs.
     runs-on: ubuntu-24.04
     if: github.ref == 'refs/heads/main'
     # The manifests it creates are signed too, so this job needs the same OIDC
-    # token the image job has; see the comment on that job.
+    # token the image jobs have; see the comment on image-hosted.
     permissions:
       contents: read
       packages: write

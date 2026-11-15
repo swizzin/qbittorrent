@@ -10,9 +10,9 @@ name: pull request
 # pull_request_target, so a run uses the pull request's own workflow files with
 # a read-only token.
 #
-# The image itself cannot be built here (that is the eleven-variant matrix in
-# build.yml, which needs the project's own runners for the znver3 legs). So these
-# checks need no image:
+# The image itself cannot be built here (that is the eleven legs split across
+# build.yml's two image jobs, which needs the project's own runners for the
+# znver3 legs). So these checks need no image:
 # actionlint over the workflows, shellcheck over the shell scripts, hadolint
 # over the Dockerfile, and the axis and tag scheme hack/versions.sh derives.
 # hack/verify-binary.sh and hack/smoke.sh both take a built image, so nothing
@@ -173,6 +173,35 @@ jobs:
             "$(immutable musl 10g znver3 amd64 2.1.2)" | sort -u | wc -l)
           [[ ${immutables} -eq 11 ]]
 
+          # Those eleven legs are split across build.yml's two image jobs, and
+          # the split has to stay a split: the eight hosted legs must not select
+          # the self-hosted runner (a leg that needs no CPU feature gains
+          # nothing there, and that runner is a privileged builder), and the
+          # three znver3 legs must all select it, being the only ones that
+          # cannot run anywhere else. The two lists together are still the
+          # eleven legs asserted above, each with its own name.
+          legs() {
+            awk -v job="  $1:" '
+              $0 == job { injob = 1; next }
+              injob && /^  [a-z][a-z0-9-]*:$/ { injob = 0 }
+              injob && /^ +- \{ name: / { print }
+            ' .github/workflows/build.yml
+          }
+          hosted=$(legs image-hosted)
+          znver3=$(legs image-znver3)
+          hosted_legs=$(grep -c 'name:' <<< "${hosted}" || true)
+          znver3_legs=$(grep -c 'name:' <<< "${znver3}" || true)
+          [[ ${hosted_legs} -eq 8 ]]
+          [[ ${znver3_legs} -eq 3 ]]
+          [[ $((hosted_legs + znver3_legs)) -eq ${immutables} ]]
+          if grep -q 'self-hosted' <<< "${hosted}"; then
+            printf 'a hosted leg selects the self-hosted runner\n' >&2
+            exit 1
+          fi
+          [[ $(grep -c 'runs_on: \[self-hosted, linux, x64, znver3\]' <<< "${znver3}" || true) -eq 3 ]]
+          [[ $(printf '%s\n%s\n' "${hosted}" "${znver3}" \
+            | grep -oE 'name: [a-z0-9.-]+' | sort -u | wc -l) -eq 11 ]]
+
           # A bad axis is an error, not a silent fallback: versions.sh validates
           # the same combinations the Dockerfile does, so it cannot assemble a tag
           # that names something the build will refuse. That includes a libtorrent
@@ -212,3 +241,5 @@ jobs:
           printf '  %s\n' "${lt12_base_amd64}" "${lt12_10g_amd64}" \
             "${lt12_10g_znver3}" "${lt12_10g_mimalloc}" "${lt21_base_amd64}" \
             "${lt21_10g_amd64}" "${lt21_10g_znver3}"
+          printf 'legs ok: %s hosted, %s on the self-hosted runner\n' \
+            "${hosted_legs}" "${znver3_legs}"

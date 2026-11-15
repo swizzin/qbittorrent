@@ -1,0 +1,229 @@
+name: image
+
+# One image leg: build it, verify the binary, smoke test it, and push and sign
+# it on main.
+#
+# This file is a reusable workflow and only that. It is called from build.yml by
+# the two jobs that own the matrices — image-hosted (the eight legs on
+# GitHub-hosted runners, all at once) and image-znver3 (the three legs on the
+# self-hosted runner, one at a time) — so it has no triggers of its own: no
+# push, no schedule, and above all no pull_request, because a fork must never
+# reach the self-hosted runner and build.yml's trigger set is the boundary that
+# keeps it out. Nothing but build.yml may call this.
+#
+# Two things cross — or fail to cross — a reusable-workflow boundary in ways
+# that bite:
+#
+#   * environment variables do not. IMAGE is stated here as well as in build.yml,
+#     whose manifest job reads it, and it cannot be passed in instead: the `with`
+#     context cannot read `env`. A literal in two files is the price.
+#   * secrets are not inherited either, except GITHUB_TOKEN, which GitHub always
+#     grants to a called workflow. That is what the GHCR login uses, so no secret
+#     has to be declared or forwarded with `secrets: inherit`.
+#
+# Permissions are the opposite case: a called workflow can never hold more than
+# its caller grants, so id-token: write for keyless signing has to be granted by
+# build.yml on both of its image jobs, and is then declared again here so this
+# file says what the leg needs. Both jobs grant contents: read, packages: write
+# and id-token: write.
+
+on:
+  workflow_call:
+    inputs:
+      # The leg, as build.yml's matrix spells it. These are exactly the matrix
+      # fields: what this file does with them is fixed, which leg gets which
+      # value is the caller's business.
+      name:
+        description: leg name, used in the job title
+        required: true
+        type: string
+      lt:
+        description: libtorrent line (1.2.20 or 2.1.2)
+        required: true
+        type: string
+      profile:
+        description: libtorrent profile (base or 10g)
+        required: true
+        type: string
+      arch:
+        description: target architecture (amd64 or arm64)
+        required: true
+        type: string
+      march:
+        description: microarchitecture (x86-64-v2, znver3 or armv8-a)
+        required: true
+        type: string
+      allocator:
+        description: allocator (musl or mimalloc)
+        required: true
+        type: string
+      platform:
+        description: docker platform (linux/amd64 or linux/arm64)
+        required: true
+        type: string
+      multi:
+        description: whether this leg feeds a multi-arch manifest
+        required: true
+        type: boolean
+      runs_on:
+        description: runner labels, as a JSON array from toJSON(matrix.runs_on)
+        required: true
+        type: string
+
+env:
+  IMAGE: ghcr.io/swizzin/qbittorrent
+
+jobs:
+  image:
+    name: build, verify, push (${{ inputs.name }})
+    # Where a leg runs is the caller's matrix. The baseline legs run on
+    # GitHub-hosted runners — native amd64 and native arm64, so the build needs
+    # no binfmt on any runner. The znver3 legs run on the project's self-hosted
+    # runner, the only machine known to be Zen 3: those binaries use AVX2/BMI2,
+    # so running their smoke test on an Intel or an older AMD host is a SIGILL,
+    # not a test.
+    #
+    # Time is not the limit on either kind: the build takes 18.6 minutes at 6
+    # parallel jobs on the project's runner, against a 6-hour job limit, so 4
+    # vCPUs is still nowhere near it; disk (~20 GiB) is the constraint to watch.
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    # Signing is keyless (see "Sign the pushed digests"), which is what the OIDC
+    # token is for. The caller grants it; this job declares it so the leg's
+    # permission set is readable here too. The job already holds packages:
+    # write, so a signature minted there claims exactly what the push already
+    # claimed.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: Hosted-runner capacity
+        if: runner.environment == 'github-hosted'
+        run: |
+          # Printed so a build that dies on memory or disk says so in its own log.
+          # The build wants ~20 GiB of disk; the root filesystem is the tight one
+          # on these runners, so the docker root directory matters as much as /.
+          nproc
+          free -h
+          printf 'docker root: %s\n' "$(docker info --format '{{.DockerRootDir}}')"
+          df -h / "$(docker info --format '{{.DockerRootDir}}')"
+
+      - name: Host tools for the binary checks
+        run: |
+          missing=()
+          for tool in readelf objdump file strings; do
+            command -v "${tool}" >/dev/null 2>&1 || missing+=("${tool}")
+          done
+          if (( ${#missing[@]} )); then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends binutils file
+          fi
+
+      - name: Read versions from the Dockerfile
+        run: hack/versions.sh "${{ inputs.allocator }}" "${{ inputs.profile }}" "${{ inputs.march }}" "${{ inputs.arch }}" "${{ inputs.lt }}" >> "${GITHUB_ENV}"
+
+      # Two tags per leg, one scheme for all of them (README, "Tags"):
+      #
+      #   immutable  sha-<12>-lt<lt>-<variant>[-<arch>]   this commit, this variant
+      #   moving     <qbt>-lt<lt>[-10g][-znver3][-mimalloc]   the variant
+      #
+      # A tag with no arch suffix is a multi-arch manifest, which the manifest
+      # job assembles; the multi-arch legs push their moving tag per arch so it
+      # has something to assemble. The immutable tag carries the libtorrent line
+      # as well as the variant, because both lines build a `base` and a `10g`
+      # variant and would otherwise collide on every commit. No two legs can
+      # assemble the same immutable name, and one line's tag never names another
+      # line's image.
+      - name: Compute the push tags
+        run: |
+          IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-lt${LT_VERSION}-${VARIANT}-${ARCH}"
+          if [ "${{ inputs.multi }}" = "true" ]; then
+            PUSH_TAG="${IMAGE_TAG}-${ARCH}"
+          else
+            PUSH_TAG="${IMAGE_TAG}"
+          fi
+          {
+            echo "PUSH_TAG=${PUSH_TAG}"
+            echo "IMMUTABLE_TAG=${IMMUTABLE_TAG}"
+          } >> "${GITHUB_ENV}"
+
+      # BUILD_JOBS is the compile parallelism, and this build is memory-hungry
+      # (roughly 2 GiB per compiler process). A self-hosted runner sets it in its
+      # own environment, because its pod is the thing with a CPU and memory
+      # limit; anywhere else it is the core count, capped at the Dockerfile's
+      # default of 16.
+      - name: Build
+        run: |
+          jobs="${BUILD_JOBS:-$(nproc)}"
+          if ((jobs > 16)); then jobs=16; fi
+          docker buildx build \
+            --load \
+            --platform "${{ inputs.platform }}" \
+            --progress=plain \
+            --build-arg BUILD_JOBS="${jobs}" \
+            --build-arg LT_VERSION="${{ inputs.lt }}" \
+            --build-arg ALLOCATOR="${{ inputs.allocator }}" \
+            --build-arg PROFILE="${{ inputs.profile }}" \
+            --build-arg MARCH="${{ inputs.march }}" \
+            --tag "${IMAGE}:${IMAGE_TAG}" \
+            .
+
+      - name: Verify binary
+        run: hack/verify-binary.sh "${IMAGE}:${IMAGE_TAG}"
+
+      - name: Smoke test
+        run: hack/smoke.sh "${IMAGE}:${IMAGE_TAG}"
+
+      - name: Log in to GHCR
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # An immutable tag is never re-pushed: if this commit's tag is already
+          # in the registry, something is published under that name and this
+          # build must not change the image behind it. The moving tags are the
+          # ones that move.
+          if docker buildx imagetools inspect "${IMAGE}:${IMMUTABLE_TAG}" >/dev/null 2>&1; then
+            printf 'refusing to re-push immutable tag %s: it already exists\n' "${IMMUTABLE_TAG}" >&2
+            exit 1
+          fi
+          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${PUSH_TAG}"
+          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${IMMUTABLE_TAG}"
+          docker push "${IMAGE}:${PUSH_TAG}"
+          docker push "${IMAGE}:${IMMUTABLE_TAG}"
+
+      - name: Install cosign
+        if: github.ref == 'refs/heads/main'
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.1
+        with:
+          # Pinned to the 2.x line: its signature lands in the registry as
+          # <digest>.sig, which is what `cosign verify` reads (README, "Verifying
+          # a published image").
+          cosign-release: 'v2.6.5'
+
+      - name: Sign the pushed digests
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -eu
+          # Keyless: cosign takes a short-lived certificate from GitHub's OIDC
+          # issuer, so the signature says "this workflow, this commit" and there
+          # is no long-lived key to hold or leak. The digest is what is signed,
+          # not the tag: the moving tags are re-pointed on the next push, and the
+          # signature is a claim about an image, not about a name.
+          digest=$(docker buildx imagetools inspect "${IMAGE}:${IMMUTABLE_TAG}" \
+            --format '{{.Manifest.Digest}}')
+          printf 'signing %s: %s\n' "${IMMUTABLE_TAG}" "${digest}"
+          cosign sign --yes "${IMAGE}@${digest}"
