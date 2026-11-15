@@ -93,8 +93,10 @@ SHELL ["/bin/sh", "-c"]
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 
 # The script installs its own build dependencies; these four are what it needs
-# before it can bootstrap. Package versions are not pinned: the base image above
-# is pinned by digest, and that digest fixes the contents of its package index.
+# before it can bootstrap. Package versions are not pinned: apk resolves them
+# from the pinned Alpine release branch's index at build time, so they take
+# that branch's security fixes, and the pushed image's digest is what records
+# the exact packages a build got.
 # hadolint ignore=DL3018
 RUN apk add --no-cache bash git curl ca-certificates
 
@@ -342,8 +344,9 @@ LABEL org.opencontainers.image.source="https://github.com/swizzin/qbittorrent" \
       org.opencontainers.image.version="${QBT_VERSION}" \
       org.opencontainers.image.description="qBittorrent ${QBT_VERSION} on libtorrent ${LT_VERSION}, static musl, ${PROFILE} libtorrent defaults, compiled for ${MARCH}, ${ALLOCATOR} malloc"
 
-# The runtime tools. Versions are not pinned here either: ALPINE_IMAGE above is
-# pinned by digest, and that digest fixes the package index these come from.
+# The runtime tools. Versions are not pinned here either: like the build stage,
+# apk takes them from the Alpine release branch's index at build time, and the
+# pushed digest records what a build shipped.
 # hadolint ignore=DL3018
 RUN apk add --no-cache catatonit tzdata ca-certificates bash 7zip
 
