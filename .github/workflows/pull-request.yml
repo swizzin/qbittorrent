@@ -10,7 +10,7 @@ name: pull request
 # pull_request_target, so a run uses the pull request's own workflow files with
 # a read-only token.
 #
-# The image itself cannot be built here (that is the six-variant matrix in
+# The image itself cannot be built here (that is the eleven-variant matrix in
 # build.yml, which needs the project's own runners for the znver3 legs). So these
 # checks need no image:
 # actionlint over the workflows, shellcheck over the shell scripts, hadolint
@@ -108,59 +108,107 @@ jobs:
           set -euo pipefail
 
           tag() { ( eval "$(hack/versions.sh "$@")"; printf '%s\n' "${IMAGE_TAG}" ); }
+          variant() { ( eval "$(hack/versions.sh "$@")"; printf '%s\n' "${VARIANT}" ); }
+          immutable() {
+            ( eval "$(hack/versions.sh "$@")"
+              printf 'sha-0123456789ab-lt%s-%s-%s\n' "${LT_VERSION}" "${VARIANT}" "${ARCH}" )
+          }
 
-          base_amd64=$(tag musl base x86-64-v2 amd64)
-          base_arm64=$(tag musl base armv8-a arm64)
-          ten_amd64=$(tag musl 10g x86-64-v2 amd64)
-          ten_arm64=$(tag musl 10g armv8-a arm64)
-          ten_znver3=$(tag musl 10g znver3 amd64)
-          ten_mimalloc=$(tag mimalloc 10g znver3 amd64)
+          lt12_base_amd64=$(tag musl base x86-64-v2 amd64 1.2.20)
+          lt12_base_arm64=$(tag musl base armv8-a arm64 1.2.20)
+          lt12_10g_amd64=$(tag musl 10g x86-64-v2 amd64 1.2.20)
+          lt12_10g_arm64=$(tag musl 10g armv8-a arm64 1.2.20)
+          lt12_10g_znver3=$(tag musl 10g znver3 amd64 1.2.20)
+          lt12_10g_mimalloc=$(tag mimalloc 10g znver3 amd64 1.2.20)
 
-          # The architecture is never part of a tag: both baseline tags are
-          # multi-arch manifests over those per-arch images.
-          [[ ${base_amd64} == "${base_arm64}" ]]
-          [[ ${ten_amd64} == "${ten_arm64}" ]]
+          lt21_base_amd64=$(tag musl base x86-64-v2 amd64 2.1.2)
+          lt21_base_arm64=$(tag musl base armv8-a arm64 2.1.2)
+          lt21_10g_amd64=$(tag musl 10g x86-64-v2 amd64 2.1.2)
+          lt21_10g_arm64=$(tag musl 10g armv8-a arm64 2.1.2)
+          lt21_10g_znver3=$(tag musl 10g znver3 amd64 2.1.2)
 
-          # The suffix order is profile, then microarchitecture, then allocator.
-          [[ ${base_amd64} =~ -lt[0-9]+(\.[0-9]+)+$ ]]
-          [[ ${ten_amd64} == "${base_amd64}-10g" ]]
-          [[ ${ten_znver3} == "${ten_amd64}-znver3" ]]
-          [[ ${ten_mimalloc} == "${ten_znver3}-mimalloc" ]]
+          # The 1.2.20 line's moving tags are unchanged: they are still
+          # <qbt>-lt1.2.20 with the profile, microarchitecture and allocator
+          # suffixes in that order.
+          [[ ${lt12_base_amd64} =~ -lt1\.2\.20$ ]]
+          [[ ${lt12_base_arm64} == "${lt12_base_amd64}" ]]
+          [[ ${lt12_10g_amd64} == "${lt12_base_amd64}-10g" ]]
+          [[ ${lt12_10g_arm64} == "${lt12_10g_amd64}" ]]
+          [[ ${lt12_10g_znver3} == "${lt12_10g_amd64}-znver3" ]]
+          [[ ${lt12_10g_mimalloc} == "${lt12_10g_znver3}-mimalloc" ]]
 
-          # Six matrix legs, four moving tags, and no tag assembled by accident:
-          # each multi-arch profile is one tag shared by its two arch legs, and
-          # the two znver3 legs are single-arch images with a tag each.
-          distinct=$(printf '%s\n' "${base_amd64}" "${base_arm64}" "${ten_amd64}" \
-            "${ten_arm64}" "${ten_znver3}" "${ten_mimalloc}" | sort -u | wc -l)
-          [[ ${distinct} -eq 4 ]]
+          # The 2.1.2 line adds its own base, 10g and 10g-znver3 names, and no
+          # mimalloc variant: the allocator A/B is a 1.2.20 experiment.
+          [[ ${lt21_base_amd64} =~ -lt2\.1\.2$ ]]
+          [[ ${lt21_base_arm64} == "${lt21_base_amd64}" ]]
+          [[ ${lt21_10g_amd64} == "${lt21_base_amd64}-10g" ]]
+          [[ ${lt21_10g_arm64} == "${lt21_10g_amd64}" ]]
+          [[ ${lt21_10g_znver3} == "${lt21_10g_amd64}-znver3" ]]
+
+          # Eleven matrix legs, seven moving tags, and no tag assembled by
+          # accident: each line's base and 10g are one multi-arch tag shared by
+          # their two arch legs, and the three znver3 legs are single images with
+          # a tag each. The architecture is never part of a moving tag.
+          distinct=$(printf '%s\n' \
+            "${lt12_base_amd64}" "${lt12_base_arm64}" "${lt12_10g_amd64}" \
+            "${lt12_10g_arm64}" "${lt12_10g_znver3}" "${lt12_10g_mimalloc}" \
+            "${lt21_base_amd64}" "${lt21_base_arm64}" "${lt21_10g_amd64}" \
+            "${lt21_10g_arm64}" "${lt21_10g_znver3}" | sort -u | wc -l)
+          [[ ${distinct} -eq 7 ]]
+
+          # Every leg's immutable name is distinct too: it carries the libtorrent
+          # line, the variant and the arch, so neither line's base or 10g leg can
+          # collide with the other line's, nor with a single-image leg.
+          immutables=$(printf '%s\n' \
+            "$(immutable musl base x86-64-v2 amd64 1.2.20)" \
+            "$(immutable musl base armv8-a arm64 1.2.20)" \
+            "$(immutable musl 10g x86-64-v2 amd64 1.2.20)" \
+            "$(immutable musl 10g armv8-a arm64 1.2.20)" \
+            "$(immutable musl 10g znver3 amd64 1.2.20)" \
+            "$(immutable mimalloc 10g znver3 amd64 1.2.20)" \
+            "$(immutable musl base x86-64-v2 amd64 2.1.2)" \
+            "$(immutable musl base armv8-a arm64 2.1.2)" \
+            "$(immutable musl 10g x86-64-v2 amd64 2.1.2)" \
+            "$(immutable musl 10g armv8-a arm64 2.1.2)" \
+            "$(immutable musl 10g znver3 amd64 2.1.2)" | sort -u | wc -l)
+          [[ ${immutables} -eq 11 ]]
 
           # A bad axis is an error, not a silent fallback: versions.sh validates
           # the same combinations the Dockerfile does, so it cannot assemble a tag
-          # that names something the build will refuse.
+          # that names something the build will refuse. That includes a libtorrent
+          # line with no patch pair, and mimalloc anywhere but 1.2.20.
           bad() {
             if hack/versions.sh "$@" >/dev/null 2>&1; then
               printf 'versions.sh accepted: %s\n' "$*" >&2
               exit 1
             fi
           }
-          bad nope 10g x86-64-v2 amd64        # unknown allocator
-          bad musl nah x86-64-v2 amd64        # unknown profile
-          bad musl 10g znver4 amd64           # unknown march
-          bad musl 10g znver3 arm64           # arm64 is compiled for armv8-a; MARCH is ignored there
-          bad musl base armv8-a amd64         # armv8-a is not an amd64 target
-          bad mimalloc base x86-64-v2 amd64   # mimalloc is the 10g-znver3 amd64 line only
+          bad nope 10g x86-64-v2 amd64 1.2.20        # unknown allocator
+          bad musl nah x86-64-v2 amd64 1.2.20        # unknown profile
+          bad musl 10g znver4 amd64 1.2.20           # unknown march
+          bad musl 10g znver3 arm64 1.2.20           # arm64 is compiled for armv8-a; MARCH is ignored there
+          bad musl base armv8-a amd64 1.2.20         # armv8-a is not an amd64 target
+          bad mimalloc base x86-64-v2 amd64 1.2.20   # mimalloc is the 1.2.20 10g-znver3 amd64 line only
+          bad mimalloc 10g znver3 amd64 2.1.2        # ... and it is not built on 2.1.2 at all
+          bad musl base x86-64-v2 amd64 2.0.9        # no patch pair for that libtorrent line
 
-          # The immutable tag is sha-<12>-<variant>[-<arch>], so the variants have
-          # to stay four distinct names.
-          variant() { ( eval "$(hack/versions.sh "$@")"; printf '%s\n' "${VARIANT}" ); }
+          # The variant names are the four the 1.2.20 line defines; the 2.1.2
+          # line reuses three of them and adds none. Uniqueness across lines
+          # comes from the libtorrent line in the immutable tag, not from the
+          # variant name, so a repeated variant is expected and safe.
           variants=$(printf '%s\n' \
-            "$(variant musl base x86-64-v2 amd64)" \
-            "$(variant musl base armv8-a arm64)" \
-            "$(variant musl 10g x86-64-v2 amd64)" \
-            "$(variant musl 10g armv8-a arm64)" \
-            "$(variant musl 10g znver3 amd64)" \
-            "$(variant mimalloc 10g znver3 amd64)" | sort -u | wc -l)
+            "$(variant musl base x86-64-v2 amd64 1.2.20)" \
+            "$(variant musl base armv8-a arm64 1.2.20)" \
+            "$(variant musl 10g x86-64-v2 amd64 1.2.20)" \
+            "$(variant musl 10g armv8-a arm64 1.2.20)" \
+            "$(variant musl 10g znver3 amd64 1.2.20)" \
+            "$(variant mimalloc 10g znver3 amd64 1.2.20)" \
+            "$(variant musl base x86-64-v2 amd64 2.1.2)" \
+            "$(variant musl 10g x86-64-v2 amd64 2.1.2)" \
+            "$(variant musl 10g znver3 amd64 2.1.2)" | sort -u | wc -l)
           [[ ${variants} -eq 4 ]]
 
           printf 'tag scheme ok:\n'
-          printf '  %s\n' "${base_amd64}" "${ten_amd64}" "${ten_znver3}" "${ten_mimalloc}"
+          printf '  %s\n' "${lt12_base_amd64}" "${lt12_10g_amd64}" \
+            "${lt12_10g_znver3}" "${lt12_10g_mimalloc}" "${lt21_base_amd64}" \
+            "${lt21_10g_amd64}" "${lt21_10g_znver3}"
