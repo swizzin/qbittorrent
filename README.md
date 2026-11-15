@@ -191,8 +191,9 @@ to a newer build script means updating its commit and sha256 together.
 ## Building locally
 
 Requirements: docker with buildx, ~20 GiB of free disk. The amd64 builds run
-natively; the arm64 builds are cross-compiled but need qemu binfmt to assemble
-the arm64 runtime image and smoke-test it.
+natively; the arm64 build is a cross-compile (`-ma aarch64`) inside the build, so
+on an amd64 host it needs qemu binfmt to assemble the arm64 runtime image and
+smoke-test it, and on an arm64 host nothing is emulated.
 
 ```sh
 # base profile, baseline amd64
@@ -271,19 +272,39 @@ and that `unrar`, `7zz`, `unzip` and `qbt-unpack` actually work.
 
 ## CI
 
-`.github/workflows/build.yml` builds and verifies on every branch push and on
+`.github/workflows/build.yml` builds and verifies on every push to `main` and on
 `workflow_dispatch`, and pushes to `ghcr.io/swizzin/qbittorrent` only from
-`main`. The matrix runs six variants on a self-hosted runner labelled `znver3`,
-one at a time (`max-parallel: 1`): the amd64 builds natively, the arm64 builds
-are cross-compiled on the amd64 runner. Each variant builds, verifies, smoke
-tests, then (on `main`) pushes its per-arch image and immutable `sha-` tag; a
-final job assembles the `base` and `10g` multi-arch manifests from the per-arch
-images. Images are only pushed after the tests pass. The runner needs docker
-with buildx, and qemu binfmt for the arm64 variants (the workflow registers and
-then verifies it, failing clearly if binfmt is not usable). The workflow
+`main`. The matrix runs six variants, one at a time (`max-parallel: 1`). Each
+variant builds, verifies and smoke tests, then pushes its per-arch image and an
+immutable tag; a final job assembles the `base` and `10g` multi-arch manifests
+from the per-arch images. Images are only pushed after the checks pass.
+
+Where a variant runs follows from its CPU target:
+
+| legs | runner | why |
+|---|---|---|
+| `base-amd64`, `10g-amd64` (`x86-64-v2`) | `ubuntu-24.04` | the baseline ISA: builds and runs on any x86-64 host |
+| `base-arm64`, `10g-arm64` (`armv8-a`) | `ubuntu-24.04-arm` | native arm64: the runtime image and the smoke test are arm64 code, so nothing is emulated |
+| `10g-znver3-musl`, `10g-znver3-mimalloc` | self-hosted, labelled `znver3` | a `znver3` binary dies with SIGILL on any other CPU, so its smoke test needs the target |
+
+No job registers qemu binfmt: the handlers are kernel-global, so on a shared
+build host that changes the host, not the container. arm64 is still a
+cross-compile inside the build (the pinned build script's `-ma aarch64`), but on
+an arm64 machine it runs natively.
+
+A self-hosted runner exports `BUILD_JOBS` to cap compile parallelism, because
+its pod is the thing with a CPU and memory limit; anywhere else the workflow
+uses the core count, capped at the Dockerfile's default of 16. The workflow
 installs `binutils` and `file` for `hack/verify-binary.sh` when they are
-missing. A runner can export `BUILD_JOBS` to cap compile parallelism below the
-default of 16.
+missing.
+
+`.github/workflows/pull-request.yml` is the pull-request check, and it never
+runs on the self-hosted runner: `pull_request` (never `pull_request_target`),
+`contents: read`, no secrets, nothing built and nothing pushed. It runs
+actionlint, shellcheck over `hack/*.sh`, `entrypoint.sh` and `qbt-unpack`,
+hadolint over the Dockerfile, and the axis and tag scheme `hack/versions.sh`
+derives. Everything else has to be checked against a built image, so
+`verify-binary.sh` and `smoke.sh` run on `main` only.
 
 ## Licences
 

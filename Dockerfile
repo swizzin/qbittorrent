@@ -11,8 +11,9 @@
 # to the sha256 of the script itself. Patches are taken from this repository
 # only; they are copied into the script's patch tree before the build so its
 # "local patches" path is used and nothing is fetched from the network while
-# compiling. arm64 is cross-compiled on the amd64 builder (the script's
-# -ma aarch64); no qemu is needed to compile.
+# compiling. arm64 is cross-compiled by the script (-ma aarch64) on whatever the
+# build platform is: an amd64 host or an arm64 one, where that path runs natively.
+# No qemu is needed to compile, on either.
 
 # The versions. Updating qBittorrent is a change to QBT_VERSION and nothing else.
 ARG QBT_VERSION=5.3.0
@@ -38,10 +39,10 @@ ARG UNRAR_IMAGE=ghcr.io/linuxserver/unrar@sha256:48c0ce2609bb3c35764956bbd9395e9
 ###############################################################################
 # build
 ###############################################################################
-# The build stage always runs on the build platform (amd64 on the runner), even
-# when the image is assembled for arm64: the script cross-compiles the arm64
-# binary rather than running an emulated build. The runtime stage below is the
-# target platform.
+# The build stage always runs on the build platform (the runner's architecture:
+# amd64, or arm64 for the arm64 legs), even when the image is assembled for
+# arm64: the script cross-compiles the arm64 binary rather than running an
+# emulated build. The runtime stage below is the target platform.
 FROM --platform=${BUILDPLATFORM} ${ALPINE_IMAGE} AS build
 
 # buildx provides these platform ARGs; the defaults keep a plain `docker build`
@@ -145,7 +146,8 @@ RUN set -eux; \
 #    tags, installs the host build dependencies, and (for arm64) downloads the
 #    cross toolchain and the prebuilt Qt host tools. The -ma flag selects the
 #    script's cross-compilation; qbt_host_deps=yes pulls the Qt host tools from
-#    userdocs/qbt-host-deps so no qemu is needed to compile.
+#    userdocs/qbt-host-deps (published for both x86_64 and aarch64 hosts) so no
+#    qemu is needed to compile, whichever host the build stage runs on.
 # 2. install the libtorrent patch for the selected profile. A local patch file
 #    takes priority over the script's remote patch repository, so the build is
 #    reproducible.

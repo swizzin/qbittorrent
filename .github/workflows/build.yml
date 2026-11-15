@@ -30,25 +30,31 @@ env:
 jobs:
   image:
     name: build, verify, push (${{ matrix.name }})
-    # Every variant builds on the one amd64 runner. The baseline (x86-64-v2)
-    # and znver3 amd64 builds are native; the arm64 variants are cross-compiled
-    # by the build script (no qemu needed to compile) and need qemu binfmt only
-    # to assemble the arm64 runtime image and run the arm64 smoke test.
-    runs-on: [self-hosted, linux, x64, znver3]
+    # Where a variant runs is part of the matrix. The baseline builds (x86-64-v2
+    # amd64, armv8-a arm64) run natively on GitHub-hosted runners, so they need
+    # no binfmt anywhere and can be reproduced without this project's hardware.
+    # Time is not the limit there: the build takes 18.6 minutes at 6 parallel
+    # jobs on the project's runner, against a 6-hour job limit, so 4 vCPUs is
+    # still nowhere near it; disk (~20 GiB) is the constraint to watch.
+    #
+    # The znver3 pair stays on the self-hosted runner, the only machine known to
+    # be Zen 3. Those binaries use AVX2/BMI2, so running their smoke test on an
+    # Intel or an older AMD host is a SIGILL, not a test.
+    runs-on: ${{ matrix.runs_on }}
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
         include:
           # base profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
-          - { name: base-amd64,          profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true }
-          - { name: base-arm64,          profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true }
+          - { name: base-amd64,          profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: base-arm64,          profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
           # 10g profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
-          - { name: 10g-amd64,           profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true }
-          - { name: 10g-arm64,           profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true }
+          - { name: 10g-amd64,           profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: 10g-arm64,           profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
           # 10g profile, znver3 (amd64 only; the existing A/B line, unchanged)
-          - { name: 10g-znver3-musl,     profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false }
-          - { name: 10g-znver3-mimalloc, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false }
+          - { name: 10g-znver3-musl,     profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+          - { name: 10g-znver3-mimalloc, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
     timeout-minutes: 240
     steps:
       - name: Checkout
@@ -57,23 +63,16 @@ jobs:
       - name: Set up buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
-      # The arm64 build is a cross-compile, but assembling the arm64 runtime
-      # image (apk add) and the arm64 smoke test both execute arm64 code, so
-      # qemu binfmt must be registered with the builder. The next step verifies
-      # it so a missing binfmt fails here with a clear message, not mid-build.
-      - name: Set up QEMU for arm64
-        if: matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
-
-      - name: Verify QEMU binfmt
-        if: matrix.arch == 'arm64'
+      - name: Hosted-runner capacity
+        if: runner.environment == 'github-hosted'
         run: |
-          out=$(docker run --rm --platform linux/arm64 --entrypoint uname alpine:3.24 -m 2>&1 || true)
-          if [ "${out}" != "aarch64" ]; then
-            printf 'qemu binfmt is not usable for arm64 on this runner; cannot assemble or smoke the arm64 image (got: %s)\n' "${out}" >&2
-            exit 1
-          fi
-          printf 'qemu binfmt for arm64 is working (%s)\n' "${out}"
+          # Printed so a build that dies on memory or disk says so in its own log.
+          # The build wants ~20 GiB of disk; the root filesystem is the tight one
+          # on these runners, so the docker root directory matters as much as /.
+          nproc
+          free -h
+          printf 'docker root: %s\n' "$(docker info --format '{{.DockerRootDir}}')"
+          df -h / "$(docker info --format '{{.DockerRootDir}}')"
 
       - name: Host tools for the binary checks
         run: |
@@ -107,16 +106,20 @@ jobs:
             echo "SHA_TAG=${SHA_TAG}"
           } >> "${GITHUB_ENV}"
 
-      # BUILD_JOBS comes from the runner's environment when it sets one, so a
-      # runner on a shared host can cap compile parallelism without a commit.
-      # PROFILE/MARCH/ALLOCATOR are the build axes.
+      # BUILD_JOBS is the compile parallelism, and this build is memory-hungry
+      # (roughly 2 GiB per compiler process). A self-hosted runner sets it in its
+      # own environment, because its pod is the thing with a CPU and memory
+      # limit; anywhere else it is the core count, capped at the Dockerfile's
+      # default of 16.
       - name: Build
         run: |
+          jobs="${BUILD_JOBS:-$(nproc)}"
+          if ((jobs > 16)); then jobs=16; fi
           docker buildx build \
             --load \
             --platform "${{ matrix.platform }}" \
             --progress=plain \
-            --build-arg BUILD_JOBS="${BUILD_JOBS:-16}" \
+            --build-arg BUILD_JOBS="${jobs}" \
             --build-arg ALLOCATOR="${{ matrix.allocator }}" \
             --build-arg PROFILE="${{ matrix.profile }}" \
             --build-arg MARCH="${{ matrix.march }}" \
@@ -148,7 +151,10 @@ jobs:
   manifest:
     name: assemble multi-arch manifests
     needs: image
-    runs-on: [self-hosted, linux, x64, znver3]
+    # Nothing here builds or runs a binary: it only creates manifest lists in
+    # the registry from the per-arch images the matrix pushed, so it needs no
+    # CPU feature and runs on a hosted runner like the baseline legs.
+    runs-on: ubuntu-24.04
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Checkout

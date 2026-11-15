@@ -1,8 +1,9 @@
 # actionlint configuration.
 #
-# There is a single self-hosted runner, labelled with the CPU microarchitecture
-# it has. Every variant builds on it: the amd64 images natively (-march=znver3
-# or x86-64-v2), the arm64 images by cross-compilation.
+# Only the znver3 legs still name the self-hosted runner (as a matrix value, so
+# actionlint cannot see the label): it is labelled with the CPU
+# microarchitecture it has, because a znver3 binary cannot be built or smoked on
+# anything older. The baseline legs run on GitHub-hosted runners.
 self-hosted-runner:
   labels:
     - znver3
