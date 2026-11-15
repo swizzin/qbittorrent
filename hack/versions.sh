@@ -63,8 +63,8 @@ case "${arch}" in
     *) printf 'versions: unknown arch %q (want amd64|arm64)\n' "${arch}" >&2; exit 1 ;;
 esac
 
-# The arm64 build ignores MARCH: the Dockerfile compiles the cross toolchain's
-# armv8-a baseline and records that in BUILD-INFO whatever MARCH says. Accepting
+# The arm64 build ignores MARCH: the Dockerfile compiles for the armv8-a
+# baseline and records that in BUILD-INFO whatever MARCH says. Accepting
 # another value here would produce a tag (and a BUILD-INFO) that disagrees.
 case "${arch}:${march}" in
     amd64:x86-64-v2|amd64:znver3|arm64:armv8-a) ;;

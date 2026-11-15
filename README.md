@@ -6,8 +6,8 @@ side by side: **qBittorrent 5.3.0** on **libtorrent 1.2.20** and on
 
 Each line is built in two compiled libtorrent profiles — the **default** (safe on
 the smallest box; `PROFILE=base` to the build) and **`10g`** (tuned for a 10 Gbit seedbox) — across two targets:
-**amd64** (baseline `x86-64-v2` or `znver3`) and **arm64** (`aarch64`,
-cross-compiled). Each line also has its own compiled-defaults patch pair, because
+**amd64** (baseline `x86-64-v2` or `znver3`) and **arm64** (`aarch64`), each
+built natively on its own architecture. Each line also has its own compiled-defaults patch pair, because
 a 1.2 patch does not apply to 2.x. On the 1.2.20 line the allocator is a further
 axis: **`musl`** (musl's own malloc — the default) and, for its `10g-znver3`
 amd64 variant, **`mimalloc`** (mimalloc v3.5.4 statically linked as a drop-in
@@ -74,9 +74,13 @@ docker pull ghcr.io/swizzin/qbittorrent@sha256:<digest>
   64-bit ARM server).
 
 `verify-binary.sh` asserts the exact architecture and `-march` of every build:
-the ELF machine, the recorded `.GCC.command.line` flags, and — for amd64 — an
-instruction census (BMI2/AVX present in a `znver3` build, absent from an
-`x86-64-v2` build).
+the ELF machine and the recorded `.GCC.command.line` flags. A `znver3` build must
+also contain BMI2 and AVX instructions, which proves its flag took effect. An
+`x86-64-v2` build is checked by its flags instead: every recorded `-march` is
+`x86-64` or `x86-64-v2` and no switch enables an extension beyond it. Counting
+instructions can't prove a baseline, because OpenSSL's hand-written assembly
+carries BMI2 and AVX2 paths that it picks at run time, only on a CPU that has
+them.
 
 ## The build matrix
 
@@ -245,10 +249,11 @@ script means updating its commit and sha256 together, for both lines.
 
 ## Building locally
 
-Requirements: docker with buildx, ~20 GiB of free disk. The amd64 builds run
-natively; the arm64 build is a cross-compile (`-ma aarch64`) inside the build, so
-on an amd64 host it needs qemu binfmt to assemble the arm64 runtime image and
-smoke-test it, and on an arm64 host nothing is emulated.
+Requirements: docker with buildx, ~20 GiB of free disk. Every build compiles
+natively for its target: build amd64 images on an amd64 host and arm64 images on
+an arm64 host, and nothing is emulated. Building arm64 on an amd64 host works
+only with qemu binfmt registered, and then the whole compile runs emulated
+(hours).
 
 ```sh
 # base profile, baseline amd64, libtorrent 1.2.20 (the Dockerfile default line)
@@ -276,7 +281,7 @@ docker buildx build --load --platform linux/amd64 \
   --build-arg LT_VERSION=2.1.2 \
   -t qbittorrent:5.3.0-lt2.1.2-10g-znver3 .
 
-# arm64 (cross-compiled; qemu binfmt must be registered for the runtime stage)
+# arm64 (on an arm64 host)
 docker buildx build --load --platform linux/arm64 \
   --build-arg PROFILE=base \
   -t qbittorrent:5.3.0-lt1.2.20-arm64 .
@@ -327,9 +332,9 @@ runs the binary with `MIMALLOC_VERBOSE=1` and `MIMALLOC_SHOW_STATS=1` (only
 during the check) and requires mimalloc's own output, rather than trusting
 static presence.
 
-`verify-binary.sh` can run against an arm64 image only when qemu binfmt is
-registered on the host; otherwise set `QBT_VERIFY_RUN=0` to fall back to
-static-only inspection (the binary cannot be executed).
+`verify-binary.sh` executes the binary, so run it on a host of the image's
+architecture (CI does). For an arm64 image on an amd64 host without qemu binfmt,
+set `QBT_VERIFY_RUN=0` to fall back to static-only inspection.
 
 `smoke.sh` runs the image with `--read-only`, `--user 1000:1000`, tmpfs `/tmp`
 and an empty `/config`, waits for the WebUI on a non-default port, logs in with
@@ -391,9 +396,8 @@ The `lt2.1.2` legs are the two baselines plus 10g-znver3; there is no 2.1
 mimalloc leg, because the allocator A/B is a 1.2.20 experiment.
 
 No job registers qemu binfmt: the handlers are kernel-global, so on a shared
-build host that changes the host, not the container. arm64 is still a
-cross-compile inside the build (the pinned build script's `-ma aarch64`), but on
-an arm64 machine it runs natively.
+build host that changes the host, not the container. None is needed: every leg
+runs on a runner of its own architecture and compiles natively, arm64 included.
 
 A self-hosted runner exports `BUILD_JOBS` to cap compile parallelism, because
 its pod is the thing with a CPU and memory limit; anywhere else the workflow

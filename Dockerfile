@@ -13,9 +13,9 @@
 # to the sha256 of the script itself. Patches are taken from this repository
 # only; they are copied into the script's patch tree before the build so its
 # "local patches" path is used and nothing is fetched from the network while
-# compiling. arm64 is cross-compiled by the script (-ma aarch64) on whatever the
-# build platform is: an amd64 host or an arm64 one, where that path runs natively.
-# No qemu is needed to compile, on either.
+# compiling. Each architecture is built natively, on a host of its own
+# architecture: the script's native path, the same one on amd64 and arm64, with
+# no cross toolchain and no prebuilt host tools.
 
 # The versions. Updating qBittorrent is a change to QBT_VERSION and nothing else.
 ARG QBT_VERSION=5.3.0
@@ -53,24 +53,23 @@ ARG UNRAR_IMAGE=ghcr.io/linuxserver/unrar@sha256:48c0ce2609bb3c35764956bbd9395e9
 ###############################################################################
 # build
 ###############################################################################
-# The build stage always runs on the build platform (the runner's architecture:
-# amd64, or arm64 for the arm64 legs), even when the image is assembled for
-# arm64: the script cross-compiles the arm64 binary rather than running an
-# emulated build. The runtime stage below is the target platform.
-FROM --platform=${BUILDPLATFORM} ${ALPINE_IMAGE} AS build
+# The build stage runs on the target platform: an arm64 image is compiled by an
+# arm64 Alpine with its own toolchain, exactly as an amd64 one is. CI builds
+# every leg on a runner of the leg's architecture, so nothing is emulated. On a
+# host of the other architecture the stage needs qemu binfmt and runs the whole
+# compile emulated, which works and takes hours.
+FROM --platform=${TARGETPLATFORM} ${ALPINE_IMAGE} AS build
 
 # BuildKit fills these in from --platform. They carry no default on purpose: a
 # default here wins over BuildKit's value, so an arm64 build would see amd64
 # and take the amd64 branches below.
-ARG BUILDPLATFORM
 ARG TARGETPLATFORM
 ARG TARGETARCH
 
 # Microarchitecture target for amd64. This is the single knob for a baseline
 # build:
 #   docker buildx build --build-arg MARCH=x86-64-v2 ...
-# It is ignored for arm64, where the aarch64-linux-musl cross toolchain targets
-# the armv8-a baseline.
+# It is ignored for arm64, which is always built for the armv8-a baseline.
 ARG MARCH=znver3
 ARG BUILD_JOBS=16
 ARG QBT_VERSION
@@ -174,11 +173,9 @@ RUN set -eux; \
     test -f /build/cache/iconv/configure
 
 # 1. bootstrap: creates qbt-build/ with the patch directories for the pinned
-#    tags, installs the host build dependencies, and (for arm64) downloads the
-#    cross toolchain and the prebuilt Qt host tools. The -ma flag selects the
-#    script's cross-compilation; qbt_host_deps=yes pulls the Qt host tools from
-#    userdocs/qbt-host-deps (published for both x86_64 and aarch64 hosts) so no
-#    qemu is needed to compile, whichever host the build stage runs on.
+#    tags and installs the build dependencies from Alpine. There is no -ma flag:
+#    the script builds for the architecture it runs on, with the host toolchain,
+#    on arm64 as on amd64.
 # 2. install the libtorrent patch for the selected line and profile. A local
 #    patch file takes priority over the script's remote patch repository, so the
 #    build is reproducible.
@@ -188,11 +185,6 @@ RUN set -eux; \
 #    "url" file: that marks the module as locally patched, and because every
 #    line is a comment nothing is downloaded and nothing is applied.
 RUN set -eux; \
-    cross=(); \
-    if [ "${TARGETARCH}" = "arm64" ]; then \
-        cross=(-ma aarch64); \
-        export qbt_host_deps=yes qbt_with_qemu=no; \
-    fi; \
     case "${PROFILE}" in \
         base) patch_src="base.patch" ;; \
         10g) patch_src="patch" ;; \
@@ -202,7 +194,7 @@ RUN set -eux; \
         2.1.*) boost_tag="${BOOST_TAG_LT2_1}" ;; \
         *) printf 'no Boost pin for libtorrent %s\n' "${LT_VERSION}" >&2; exit 1 ;; \
     esac; \
-    bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bt "${boost_tag}" -bs-a "${cross[@]}"; \
+    bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bt "${boost_tag}" -bs-a; \
     install -D -m 0644 "/build/patches/libtorrent/${LT_VERSION}/${patch_src}" "/build/qbt-build/patches/libtorrent/${LT_VERSION}/patch"; \
     test -s "/build/qbt-build/patches/libtorrent/${LT_VERSION}/patch"; \
     printf '%s\n' \
@@ -247,7 +239,7 @@ RUN set -eux; \
 # openssl, boost, Qt, libtorrent, qBittorrent). amd64 carries -march/-mtune for
 # the chosen microarchitecture (GCC takes x86-64-v2 for -march only, so the
 # baseline tunes for generic); arm64 carries -march=armv8-a so the recorded
-# flags name the baseline AArch64 target the cross toolchain builds for. For the
+# flags name the baseline AArch64 target. For the
 # mimalloc variant the LDFLAGS also carry mimalloc.o, which the script appends
 # at the end of the qbittorrent link line; the driver links libc.a after that,
 # so musl's own malloc objects are never pulled in and the override is clean
@@ -265,10 +257,7 @@ RUN set -eux; \
 # failed. On failure only the tail of the build log and of the per-module logs
 # the script writes are printed.
 RUN set -eu; \
-    cross=(); \
     if [ "${TARGETARCH}" = "arm64" ]; then \
-        cross=(-ma aarch64); \
-        export qbt_host_deps=yes qbt_with_qemu=no; \
         flags="-march=armv8-a -frecord-gcc-switches"; \
         ldflags=""; \
     else \
@@ -288,7 +277,7 @@ RUN set -eu; \
         2.1.*) boost_tag="${BOOST_TAG_LT2_1}" ;; \
         *) printf 'no Boost pin for libtorrent %s\n' "${LT_VERSION}" >&2; exit 1 ;; \
     esac; \
-    if ! bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bt "${boost_tag}" -cd /build/cache -n all "${cross[@]}" > /build/build.log 2>&1; then \
+    if ! bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bt "${boost_tag}" -cd /build/cache -n all > /build/build.log 2>&1; then \
         echo "=== build failed: tail -n 200 of /build/build.log ==="; \
         tail -n 200 /build/build.log; \
         for log in /build/qbt-build/logs/*.log; do \
@@ -310,8 +299,8 @@ RUN set -eu; \
 # and unless the compiler was really invoked with the target flags. The script
 # warns and carries on when a patch fails, so this step is the actual gate.
 # The two values that scale with the box differ by profile; the other four
-# tunings are shared. The arm64 binary cannot run on the amd64 build stage, so
-# its version is read from the binary instead of executed.
+# tunings are shared. The build stage is the target architecture, so the binary
+# is executed for its version on both.
 RUN set -eux; \
     bin=/build/qbt-build/completed/qbittorrent-nox; \
     test -x "${bin}"; \
@@ -337,12 +326,8 @@ RUN set -eux; \
     awk -v m="-march=${march}" 'index($0, "settings_pack.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-libtorrent.txt; \
     ninja -C "$(echo /build/qbt-build/qBittorrent-*/build)" -t commands > /build/ninja-qbittorrent.txt; \
     awk -v m="-march=${march}" 'index($0, "sessionimpl.cpp.o") && index($0, m) { found = 1 } END { exit !found }' /build/ninja-qbittorrent.txt; \
-    if [ "${TARGETARCH}" = "arm64" ]; then \
-        grep -qaF "${QBT_VERSION}" "${bin}"; \
-    else \
-        "${bin}" --version > /build/version.txt; \
-        grep -qF "v${QBT_VERSION}" /build/version.txt; \
-    fi; \
+    "${bin}" --version > /build/version.txt; \
+    grep -qF "v${QBT_VERSION}" /build/version.txt; \
     if [ "${ALLOCATOR}" = "mimalloc" ]; then \
         grep -qF 'mimalloc' "${bin}"; \
         readelf -p .GCC.command.line "${bin}" | grep -qF -- "-march=${march}"; \
