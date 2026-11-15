@@ -82,10 +82,17 @@ ARG LT_TAG=v${LT_VERSION}
 # OpenSSL is pinned to the 3.5 LTS line for both libtorrent lines. libtorrent
 # 1.2 pulls Boost 1.86, whose asio TLS hostname verification reads ASN1_STRING
 # fields directly; OpenSSL 4.x made those types opaque, so 4.x does not compile.
-# The 2.1 line takes a newer Boost from the same script, but one OpenSSL pin for
+# The 2.1 line takes a newer Boost (pinned below), but one OpenSSL pin for
 # both lines is one thing to reason about, and 3.5 is the supported LTS line
 # (3.4 went end-of-life in October 2026).
 ARG OPENSSL_TAG=openssl-3.5.9
+
+# Boost is pinned per libtorrent line. The script defaults 1.2 to Boost 1.86.0
+# but resolves the newest Boost release for 2.x at build time, so without a pin
+# two lt2 builds of one commit could link different Boost releases. Bumping it is
+# a one-line change here, like every other pin.
+ARG BOOST_TAG_LT1_2=boost-1.86.0
+ARG BOOST_TAG_LT2_1=boost-1.92.0
 
 # userdocs/qbittorrent-nox-static @ 66a0aa3fd2044dcd2a327670aba35779b0957e34
 ARG QBT_STATIC_SCRIPT_URL=https://raw.githubusercontent.com/userdocs/qbittorrent-nox-static/66a0aa3fd2044dcd2a327670aba35779b0957e34/qbittorrent-nox-static.sh
@@ -189,7 +196,12 @@ RUN set -eux; \
         base) patch_src="base.patch" ;; \
         10g) patch_src="patch" ;; \
     esac; \
-    bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bs-a "${cross[@]}"; \
+    case "${LT_VERSION}" in \
+        1.2.*) boost_tag="${BOOST_TAG_LT1_2}" ;; \
+        2.1.*) boost_tag="${BOOST_TAG_LT2_1}" ;; \
+        *) printf 'no Boost pin for libtorrent %s\n' "${LT_VERSION}" >&2; exit 1 ;; \
+    esac; \
+    bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bt "${boost_tag}" -bs-a "${cross[@]}"; \
     install -D -m 0644 "/build/patches/libtorrent/${LT_VERSION}/${patch_src}" "/build/qbt-build/patches/libtorrent/${LT_VERSION}/patch"; \
     test -s "/build/qbt-build/patches/libtorrent/${LT_VERSION}/patch"; \
     printf '%s\n' \
@@ -265,7 +277,12 @@ RUN set -eu; \
         fi; \
     fi; \
     export CFLAGS="${flags}" CXXFLAGS="${flags}" LDFLAGS="${ldflags}"; \
-    if ! bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -cd /build/cache -n all "${cross[@]}" > /build/build.log 2>&1; then \
+    case "${LT_VERSION}" in \
+        1.2.*) boost_tag="${BOOST_TAG_LT1_2}" ;; \
+        2.1.*) boost_tag="${BOOST_TAG_LT2_1}" ;; \
+        *) printf 'no Boost pin for libtorrent %s\n' "${LT_VERSION}" >&2; exit 1 ;; \
+    esac; \
+    if ! bash qbittorrent-nox-static.sh -lt "${LT_TAG}" -qt "${QBT_TAG}" -ot "${OPENSSL_TAG}" -bt "${boost_tag}" -cd /build/cache -n all "${cross[@]}" > /build/build.log 2>&1; then \
         echo "=== build failed: tail -n 200 of /build/build.log ==="; \
         tail -n 200 /build/build.log; \
         for log in /build/qbt-build/logs/*.log; do \
