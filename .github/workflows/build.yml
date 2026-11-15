@@ -55,6 +55,14 @@ jobs:
           # 10g profile, znver3 (amd64 only; the existing A/B line, unchanged)
           - { name: 10g-znver3-musl,     profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
           - { name: 10g-znver3-mimalloc, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+    # Signing is keyless (see "Sign the pushed digests"), which is what the OIDC
+    # token is for. It is granted on this job and on the manifest job, the two
+    # that push, and nowhere else: the build job already holds packages: write,
+    # so a signature minted there claims exactly what the push already claimed.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     timeout-minutes: 240
     steps:
       - name: Checkout
@@ -161,6 +169,29 @@ jobs:
           docker push "${IMAGE}:${PUSH_TAG}"
           docker push "${IMAGE}:${IMMUTABLE_TAG}"
 
+      - name: Install cosign
+        if: github.ref == 'refs/heads/main'
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.1
+        with:
+          # Pinned to the 2.x line: its signature lands in the registry as
+          # <digest>.sig, which is what `cosign verify` reads (README, "Verifying
+          # a published image").
+          cosign-release: 'v2.6.5'
+
+      - name: Sign the pushed digests
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -eu
+          # Keyless: cosign takes a short-lived certificate from GitHub's OIDC
+          # issuer, so the signature says "this workflow, this commit" and there
+          # is no long-lived key to hold or leak. The digest is what is signed,
+          # not the tag: the moving tags are re-pointed on the next push, and the
+          # signature is a claim about an image, not about a name.
+          digest=$(docker buildx imagetools inspect "${IMAGE}:${IMMUTABLE_TAG}" \
+            --format '{{.Manifest.Digest}}')
+          printf 'signing %s: %s\n' "${IMMUTABLE_TAG}" "${digest}"
+          cosign sign --yes "${IMAGE}@${digest}"
+
   manifest:
     name: assemble multi-arch manifests
     needs: image
@@ -169,6 +200,12 @@ jobs:
     # CPU feature and runs on a hosted runner like the baseline legs.
     runs-on: ubuntu-24.04
     if: github.ref == 'refs/heads/main'
+    # The manifests it creates are signed too, so this job needs the same OIDC
+    # token the image job has; see the comment on that job.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -223,3 +260,20 @@ jobs:
           done
           assemble "${BASE_IMMUTABLE}"
           assemble "${TENG_IMMUTABLE}"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.1
+        with:
+          cosign-release: 'v2.6.5'
+
+      - name: Sign the assembled manifests
+        run: |
+          set -eu
+          # The per-arch images were signed by the leg that pushed them; these
+          # are the four new digests (two moving, two immutable) this job created.
+          for tag in "${BASE_TAG}" "${TENG_TAG}" "${BASE_IMMUTABLE}" "${TENG_IMMUTABLE}"; do
+            digest=$(docker buildx imagetools inspect "${IMAGE}:${tag}" \
+              --format '{{.Manifest.Digest}}')
+            printf 'signing %s: %s\n' "${tag}" "${digest}"
+            cosign sign --yes "${IMAGE}@${digest}"
+          done

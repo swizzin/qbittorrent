@@ -289,6 +289,26 @@ and `/api/v2/app/buildInfo` through loopback from inside the container. It also
 checks that the process is not root, that nothing was written outside `/config`,
 and that `unrar`, `7zz`, `unzip` and `qbt-unpack` actually work.
 
+### Verifying a published image
+
+Every image and manifest pushed to `ghcr.io/swizzin/qbittorrent` is signed with
+[cosign](https://github.com/sigstore/cosign) in keyless mode: the signature
+carries a short-lived certificate from GitHub's OIDC issuer that names this
+repository, the build workflow and the commit, so there is no long-lived signing
+key to hold or leak, and a signature can only have been made by a build of this
+workflow.
+
+```sh
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity https://github.com/swizzin/qbittorrent/.github/workflows/build.yml@refs/heads/main \
+  ghcr.io/swizzin/qbittorrent@sha256:<digest>
+```
+
+Verify the digest, not the moving tag: the signature is a claim about an image,
+and the moving tags are re-pointed on the next push while the digest keeps
+naming the same bytes.
+
 ## CI
 
 `.github/workflows/build.yml` builds and verifies on every push to `main` and on
