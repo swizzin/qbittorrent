@@ -299,7 +299,7 @@ check_label() {
     fi
 }
 check_label org.opencontainers.image.source https://github.com/swizzin/qbittorrent
-check_label org.opencontainers.image.licenses 'Apache-2.0 AND GPL-2.0-or-later'
+check_label org.opencontainers.image.licenses 'Apache-2.0 AND GPL-3.0-or-later'
 check_label org.opencontainers.image.version "${QBT_VERSION}"
 
 # The OCI description records which allocator the image carries.

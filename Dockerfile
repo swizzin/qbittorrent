@@ -338,7 +338,7 @@ ARG PROFILE=10g
 ARG ALLOCATOR=musl
 
 LABEL org.opencontainers.image.source="https://github.com/swizzin/qbittorrent" \
-      org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-or-later" \
+      org.opencontainers.image.licenses="Apache-2.0 AND GPL-3.0-or-later" \
       org.opencontainers.image.version="${QBT_VERSION}" \
       org.opencontainers.image.description="qBittorrent ${QBT_VERSION} on libtorrent ${LT_VERSION}, static musl, ${PROFILE} libtorrent defaults, compiled for ${MARCH}, ${ALLOCATOR} malloc"
 

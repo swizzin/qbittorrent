@@ -347,14 +347,42 @@ derives. Everything else has to be checked against a built image, so
 
 ## Licences
 
-The contents of this repository are Apache-2.0 (see `LICENSE`).
+**This repository** — the Dockerfile, the CI, the scripts and the libtorrent
+patches — is Apache-2.0 (see `LICENSE`). That choice is deliberate: a patch or a
+script under a permissive licence can be offered upstream to libtorrent or
+qBittorrent, which a copyleft one could not.
 
-The image contains qBittorrent, which is GPL-2.0-or-later, and libtorrent,
-which is BSD-3-Clause, plus Qt, OpenSSL, Boost and zlib under their own
-licences. Corresponding source is the upstream release tags
-(qBittorrent `release-5.3.0`, libtorrent `v1.2.20`, and the versions of the
-other dependencies selected by the pinned build script) plus
-`patches/libtorrent/1.2.20/` from this repository.
+**The image is not Apache-2.0**, and its OCI label says so:
+
+```
+org.opencontainers.image.licenses="Apache-2.0 AND GPL-3.0-or-later"
+```
+
+qBittorrent's `COPYING`, at the `release-5.3.0` tag this image is built from,
+is explicit about the difference:
+
+> The qBittorrent source code is licensed under the GNU General Public License,
+> version 2 or (at your option) any later version (GPLv2+). However, the binary
+> distribution is licensed under GNU General Public License, version 3 or (at
+> your option) any later version (GPLv3+), because it contains GPLv3+ assets
+> (eg images).
+
+This image is a binary distribution, so GPL-3.0-or-later is what applies to it;
+GPLv2+ describes the source you can rebuild. qBittorrent's COPYING also carries
+an OpenSSL linking exception, which is what makes linking a statically built
+OpenSSL possible at all. libtorrent is BSD-3-Clause, and Qt, OpenSSL, Boost and
+zlib are under their own licences.
+
+**Corresponding source**: the upstream release tags — qBittorrent
+`release-5.3.0`, libtorrent `v1.2.20`, OpenSSL `openssl-3.5.9` (`OPENSSL_TAG`)
+and the versions of the rest that the pinned build script selects — plus
+`patches/libtorrent/1.2.20/` from this repository. Every pin, and the sha256 of
+the build script and of the patch the image was built with, is recorded in
+`/app/BUILD-INFO` inside the image, so the source can be rebuilt exactly rather
+than approximately.
+
+Redistributing the image is redistributing qBittorrent's binary: keep the
+notice, and be able to point at that source.
 
 ## Credits
 
