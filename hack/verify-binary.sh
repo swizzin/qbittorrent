@@ -9,9 +9,10 @@
 # promises. Exits non-zero on any failure and prints PASS at the end.
 #
 # The image identifies its own build axes through /app/BUILD-INFO (profile,
-# arch, march, allocator, libtorrent line). amd64 binaries are executed; an arm64
-# binary cannot run on an amd64 host without qemu binfmt, so set QBT_VERIFY_RUN=0
-# to fall back to static inspection for a foreign-arch image.
+# arch, march, allocator, libtorrent line). The binary is executed, so verify an
+# image on a host of its own architecture (as CI does); for a foreign-arch image
+# on a host without qemu binfmt, set QBT_VERIFY_RUN=0 to fall back to static
+# inspection.
 
 set -euo pipefail
 
@@ -171,10 +172,16 @@ fi
 #
 # -frecord-gcc-switches records the compiler flags in .GCC.command.line, which
 # survives -s and LTO, so the exact -march value can be read back out of the
-# stripped binary. The ELF machine field asserts the architecture; for amd64 an
-# instruction census then shows the -march flag was not inert: BMI2 (shlx/shrx/
-# sarx/mulx/rorx) and ymm (VEX/AVX) instructions do not exist on baseline
-# x86-64, and must be absent from an x86-64-v2 build.
+# stripped binary. The ELF machine field asserts the architecture.
+#
+# For znver3 an instruction census then shows the -march flag was not inert:
+# the compiled code contains BMI2 (shlx/shrx/sarx/mulx/rorx) and ymm (VEX/AVX)
+# instructions. For the baseline the census cannot say the opposite: OpenSSL's
+# hand-written assembly carries BMI2 and AVX2 paths that it selects at run time
+# from cpuid, so they are in every amd64 binary and run only on a CPU that has
+# them. What the baseline promises is that the compiler was never told it may
+# use them, so that is what is checked: every -march recorded in the binary is
+# x86-64 or x86-64-v2, and no recorded switch enables an extension beyond it.
 # --------------------------------------------------------------------------
 machine=$(readelf -h "${bin}" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
 printf '      ELF machine: %s\n' "${machine}"
@@ -204,8 +211,27 @@ else
         if ((bmi2 > 0)); then ok "compiled code contains BMI2 instructions"; else bad "compiled code contains BMI2 instructions"; fi
         if ((avx > 0)); then ok "compiled code contains AVX (ymm) instructions"; else bad "compiled code contains AVX (ymm) instructions"; fi
     else
-        if ((bmi2 == 0)); then ok "baseline build is free of BMI2 instructions"; else bad "baseline build is free of BMI2 instructions"; fi
-        if ((avx == 0)); then ok "baseline build is free of AVX (ymm) instructions"; else bad "baseline build is free of AVX (ymm) instructions"; fi
+        readelf -p .GCC.command.line "${bin}" >"${tmpdir}/switches.txt" 2>/dev/null || true
+        marches=$(grep -oE -- '-march=[^[:space:]]+' "${tmpdir}/switches.txt" | sort -u | tr '\n' ' ')
+        printf '      recorded -march values: %s\n' "${marches:-none}"
+        above=""
+        for m in ${marches}; do
+            case "${m}" in
+                -march=x86-64 | -march=x86-64-v2) ;;
+                *) above="${above} ${m}" ;;
+            esac
+        done
+        if [[ -n ${marches} && -z ${above} ]]; then
+            ok "every recorded -march is at most x86-64-v2"
+        else
+            bad "every recorded -march is at most x86-64-v2 (found:${above:- none recorded})"
+        fi
+        extensions=$(grep -oE -- '-m(avx[0-9a-z]*|bmi2?|fma|f16c|lzcnt|movbe|adx|sha|vaes|vpclmulqdq|gfni)([[:space:]]|$)' "${tmpdir}/switches.txt" | sort -u | tr -d '\n' || true)
+        if [[ -z ${extensions} ]]; then
+            ok "no recorded switch enables an extension beyond x86-64-v2"
+        else
+            bad "no recorded switch enables an extension beyond x86-64-v2 (found: ${extensions})"
+        fi
     fi
 fi
 
