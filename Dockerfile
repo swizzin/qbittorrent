@@ -244,7 +244,8 @@ RUN set -eux; \
 # The script appends CFLAGS/CXXFLAGS/LDFLAGS from the environment to its own
 # flags, so this is how the target is set for every module it builds (zlib,
 # openssl, boost, Qt, libtorrent, qBittorrent). amd64 carries -march/-mtune for
-# the chosen microarchitecture; arm64 carries -march=armv8-a so the recorded
+# the chosen microarchitecture (GCC takes x86-64-v2 for -march only, so the
+# baseline tunes for generic); arm64 carries -march=armv8-a so the recorded
 # flags name the baseline AArch64 target the cross toolchain builds for. For the
 # mimalloc variant the LDFLAGS also carry mimalloc.o, which the script appends
 # at the end of the qbittorrent link line; the driver links libc.a after that,
@@ -270,7 +271,11 @@ RUN set -eu; \
         flags="-march=armv8-a -frecord-gcc-switches"; \
         ldflags=""; \
     else \
-        flags="-march=${MARCH} -mtune=${MARCH} -frecord-gcc-switches"; \
+        case "${MARCH}" in \
+            x86-64*) mtune=generic ;; \
+            *) mtune="${MARCH}" ;; \
+        esac; \
+        flags="-march=${MARCH} -mtune=${mtune} -frecord-gcc-switches"; \
         ldflags="-march=${MARCH}"; \
         if [ "${ALLOCATOR}" = "mimalloc" ]; then \
             ldflags="${ldflags} /build/mimalloc/build/mimalloc.o"; \
@@ -289,6 +294,11 @@ RUN set -eu; \
             [ -f "${log}" ] || continue; \
             echo "=== ${log} (tail -n 100) ==="; \
             tail -n 100 "${log}"; \
+        done; \
+        find /build/qbt-build -maxdepth 3 -name config.log | while read -r log; do \
+            grep -q 'exit status [1-9]\|error:' "${log}" || continue; \
+            echo "=== ${log} (first errors) ==="; \
+            grep -n -m 20 -B 3 'error\|exit status [1-9]' "${log}"; \
         done; \
         exit 1; \
     fi; \
