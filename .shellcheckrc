@@ -1,0 +1,7 @@
+# hack/smoke.sh and hack/verify-binary.sh report each check through
+# `conditional && ok "..." || bad "..."`. Both helpers always return 0 (they only
+# print and count a failure), so the `|| bad` branch is taken exactly when the
+# condition is false and never when `ok` succeeds. SC2015 ("A && B || C is not
+# if-then-else") flags that pattern on every check, and it is the only finding
+# either script produces.
+disable=SC2015

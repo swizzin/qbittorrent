@@ -1,6 +1,14 @@
 name: build
 
 on:
+  # The trigger set here is a security boundary, not a convenience. This
+  # workflow's jobs run on the self-hosted runner, which is a privileged
+  # container builder on a machine we own, so anything that can start this
+  # workflow can run arbitrary code there. Only a push to main, or a manual
+  # dispatch by someone with write access, may reach it. Do not add
+  # pull_request or pull_request_target to this file: pull requests are
+  # checked by .github/workflows/pull-request.yml, which is hosted-runner only
+  # and builds nothing, because a fork must never reach the self-hosted runner.
   push:
     branches:
       - main

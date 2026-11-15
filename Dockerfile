@@ -92,7 +92,9 @@ SHELL ["/bin/sh", "-c"]
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 
 # The script installs its own build dependencies; these four are what it needs
-# before it can bootstrap.
+# before it can bootstrap. Package versions are not pinned: the base image above
+# is pinned by digest, and that digest fixes the contents of its package index.
+# hadolint ignore=DL3018
 RUN apk add --no-cache bash git curl ca-certificates
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -116,6 +118,9 @@ RUN case "${ALLOCATOR}" in \
         printf 'mimalloc is only built for the 10g-znver3 amd64 line\n' >&2; exit 1; \
     fi
 
+# Fetched, not copied: COPY cannot read a URL, and --checksum is what pins the
+# download to QBT_STATIC_SCRIPT_SHA256 above.
+# hadolint ignore=DL3020
 ADD --checksum=sha256:${QBT_STATIC_SCRIPT_SHA256} \
     ${QBT_STATIC_SCRIPT_URL} \
     /build/qbittorrent-nox-static.sh
@@ -262,7 +267,6 @@ RUN set -eux; \
     test "$(grep -c 'Using local patches method' /build/build.log)" -ge 2; \
     command -v ninja; \
     lt_src=$(echo /build/qbt-build/libtorrent-rasterbar-*/src); \
-    qbt_src=$(echo /build/qbt-build/qBittorrent-*/src); \
     case "${PROFILE}" in \
         base) watermark='SET(send_not_sent_low_watermark, 524288, nullptr)'; recvbuf='SET(max_peer_recv_buffer_size, 2 * 1024 * 1024, nullptr)' ;; \
         10g) watermark='SET(send_not_sent_low_watermark, 1024 * 1024, nullptr)'; recvbuf='SET(max_peer_recv_buffer_size, 4 * 1024 * 1024, nullptr)' ;; \
@@ -336,6 +340,9 @@ LABEL org.opencontainers.image.source="https://github.com/swizzin/qbittorrent" \
       org.opencontainers.image.version="${QBT_VERSION}" \
       org.opencontainers.image.description="qBittorrent ${QBT_VERSION} on libtorrent ${LT_VERSION}, static musl, ${PROFILE} libtorrent defaults, compiled for ${MARCH}, ${ALLOCATOR} malloc"
 
+# The runtime tools. Versions are not pinned here either: ALPINE_IMAGE above is
+# pinned by digest, and that digest fixes the package index these come from.
+# hadolint ignore=DL3018
 RUN apk add --no-cache catatonit tzdata ca-certificates bash 7zip
 
 COPY --from=build /build/qbt-build/completed/qbittorrent-nox /app/qbittorrent-nox
