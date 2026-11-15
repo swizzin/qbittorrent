@@ -20,40 +20,57 @@ with a read-only root filesystem.
 
 ## Tags
 
-Two kinds of tag. A **moving** tag names a variant and is re-pointed at the
-latest build of it. An **immutable** tag names one build of one commit and is
-never re-pushed: the jobs refuse to overwrite one, so `sha-…` always means the
-same image.
+If you just want qBittorrent, pull `latest`, or `lt1.2` to say which
+libtorrent you want:
+
+```sh
+docker pull ghcr.io/swizzin/qbittorrent:latest
+```
+
+Every tag is a **variant** name, with something in front of it or nothing. A
+variant is the libtorrent line and the build axes:
+`lt<line>[-10g][-znver3][-mimalloc]`, for example `lt1.2`, `lt1.2-10g` or
+`lt2.1-10g-znver3`. The line is libtorrent's major.minor (`1.2`, `2.1`), never
+its patch release, and the default profile has no name in any tag.
+
+| tag | example | what it is |
+|---|---|---|
+| `latest` | `latest` | rolling: the default profile on the default libtorrent line (today `lt1.2`) |
+| `<variant>` | `lt1.2-10g` | rolling: the latest build of that variant, whatever qBittorrent it carries |
+| `<qbt>-<variant>` | `5.3.0-lt1.2-10g` | moving: the latest build of that variant on that qBittorrent release |
+| `sha-<12>-<variant>` | `sha-<12>-lt1.2-10g` | immutable: that variant as built from one commit (a multi-arch manifest) |
+| `sha-<12>-<variant>-<arch>` | `sha-<12>-lt2.1-amd64` | immutable: one architecture of it, a single image |
+
+The variants built today:
+
+| variant | what it is |
+|---|---|
+| `lt1.2` | libtorrent 1.2, default profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
+| `lt1.2-10g` | 1.2, `10g` profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
+| `lt1.2-10g-znver3` | 1.2, `10g` profile, `znver3` amd64, `musl`: single image |
+| `lt1.2-10g-znver3-mimalloc` | 1.2, `10g` profile, `znver3` amd64, `mimalloc`: single image |
+| `lt2.1` | libtorrent 2.1, default profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
+| `lt2.1-10g` | 2.1, `10g` profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
+| `lt2.1-10g-znver3` | 2.1, `10g` profile, `znver3` amd64, `musl`: single image |
+
+A moving or rolling tag is re-pointed at every new build of its variant: a new
+qBittorrent moves the rolling tag to a new `<qbt>-` tag, and a libtorrent patch
+release, like an OpenSSL, Boost or Qt bump, re-points both. The exact versions
+an image was built from are in `/app/BUILD-INFO` and its
+`org.opencontainers.image.description` label. `latest` changes libtorrent line
+only with a new qBittorrent minor release, and only on purpose. An immutable
+tag is never re-pushed: the jobs refuse to overwrite one, so `sha-…` always
+means the same image. Each commit builds one release per line, so the line is
+enough to keep every leg's immutable name distinct.
 
 A tag whose last element is an architecture (`-amd64`, `-arm64`) is a single
-image; a tag with no architecture is a multi-arch **manifest** over those images.
+image; a tag with no architecture is a multi-arch **manifest** (or, for a
+`znver3` variant, its one amd64 image). The per-arch images a manifest is
+assembled from are pushed as `<qbt>-<variant>-amd64` and `-arm64`: they are
+the manifest's inputs, re-pointed on every push, and not intended for pinning.
 
-| tag | what it is |
-|---|---|
-| `5.3.0-lt1.2.20` | moving, libtorrent 1.2.20, default profile: multi-arch **manifest** (amd64 + arm64) |
-| `5.3.0-lt1.2.20-10g` | moving, 1.2.20, `10g` profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
-| `5.3.0-lt1.2.20-10g-znver3` | moving, 1.2.20, `10g` profile, `znver3` amd64, `musl`: single image |
-| `5.3.0-lt1.2.20-10g-znver3-mimalloc` | moving, 1.2.20, `10g` profile, `znver3` amd64, `mimalloc`: single image |
-| `5.3.0-lt2.1.2` | moving, libtorrent 2.1.2, default profile: multi-arch **manifest** (amd64 + arm64) |
-| `5.3.0-lt2.1.2-10g` | moving, 2.1.2, `10g` profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
-| `5.3.0-lt2.1.2-10g-znver3` | moving, 2.1.2, `10g` profile, `znver3` amd64, `musl`: single image |
-| `sha-<12>-lt<lt>` | immutable, this commit's default **manifest** for that libtorrent line |
-| `sha-<12>-lt<lt>-10g` | immutable, this commit's `10g` baseline **manifest** for that line |
-| `sha-<12>-lt<lt><suffix>-<arch>` | immutable single image: `sha-<12>-lt1.2.20-amd64`, `sha-<12>-lt2.1.2-10g-arm64`, `sha-<12>-lt1.2.20-10g-znver3-amd64`, `sha-<12>-lt1.2.20-10g-znver3-mimalloc-amd64` |
-
-`<12>` is the first 12 hex digits of the commit, `<lt>` is the libtorrent line
-(`1.2.20` or `2.1.2`), and `<suffix>` is nothing for the default profile, or
-`-10g`, `-10g-znver3` or `-10g-znver3-mimalloc`: the default image is never
-named by its profile. Every immutable tag is `sha-<12>-lt<lt><suffix>`; a
-single image appends its architecture to that, so no two matrix legs can ever
-assemble the same immutable name and one line's tag never names another line's
-image. The immutable tags carry the libtorrent line because both lines build a
-default and a `10g` image of every commit; without it they would collide. The
-1.2.20 moving tags above are unchanged from before the 2.1 line existed.
-
-The per-arch images a manifest is assembled from are pushed under the moving tag
-per arch, as `<tag>-amd64` and `<tag>-arm64`. Those are the manifest's inputs,
-re-pointed on every push, and not intended for pinning.
+Tags from before this scheme (`5.3.0-lt1.2.20`, `5.3.0-lt2.1.2-10g`, ...) stay
+where they are, but they are no longer pushed: they will not see another build.
 
 Pin by digest when the image itself has to stay the same:
 
@@ -63,12 +80,12 @@ docker pull ghcr.io/swizzin/qbittorrent@sha256:<digest>
 
 ## CPU requirement
 
-- `5.3.0-lt1.2.20-10g-znver3[-mimalloc]` and `5.3.0-lt2.1.2-10g-znver3`:
+- `lt1.2-10g-znver3[-mimalloc]` and `lt2.1-10g-znver3`:
   compiled with `-march=znver3 -mtune=znver3` — AMD Zen 3 (Ryzen 5000, EPYC
   7003) or newer (AVX2, BMI2, FMA, VAES, …). **On anything older the binary will
   die with SIGILL.**
-- `5.3.0-lt1.2.20` and `5.3.0-lt1.2.20-10g` (amd64), and `5.3.0-lt2.1.2` and
-  `5.3.0-lt2.1.2-10g` (amd64): compiled with `-march=x86-64-v2` (SSE4.2,
+- `lt1.2` and `lt1.2-10g` (amd64), and `lt2.1` and `lt2.1-10g` (amd64), which
+  includes `latest`: compiled with `-march=x86-64-v2` (SSE4.2,
   POPCNT, …), the baseline that runs on any x86-64 CPU from ~2009 on.
 - The arm64 images of both lines: compiled for the `armv8-a` baseline (any
   64-bit ARM server).
@@ -84,19 +101,19 @@ them.
 
 ## The build matrix
 
-| libtorrent | profile | CPU | arch | allocator | tag |
+| libtorrent | profile | CPU | arch | allocator | variant |
 |---|---|---|---|---|---|
-| 1.2.20 | base | baseline | amd64 | musl | `5.3.0-lt1.2.20` |
-| 1.2.20 | base | baseline | arm64 | musl | `5.3.0-lt1.2.20` |
-| 1.2.20 | 10g | baseline | amd64 | musl | `5.3.0-lt1.2.20-10g` |
-| 1.2.20 | 10g | baseline | arm64 | musl | `5.3.0-lt1.2.20-10g` |
-| 1.2.20 | 10g | znver3 | amd64 | musl | `5.3.0-lt1.2.20-10g-znver3` |
-| 1.2.20 | 10g | znver3 | amd64 | mimalloc | `5.3.0-lt1.2.20-10g-znver3-mimalloc` |
-| 2.1.2 | base | baseline | amd64 | musl | `5.3.0-lt2.1.2` |
-| 2.1.2 | base | baseline | arm64 | musl | `5.3.0-lt2.1.2` |
-| 2.1.2 | 10g | baseline | amd64 | musl | `5.3.0-lt2.1.2-10g` |
-| 2.1.2 | 10g | baseline | arm64 | musl | `5.3.0-lt2.1.2-10g` |
-| 2.1.2 | 10g | znver3 | amd64 | musl | `5.3.0-lt2.1.2-10g-znver3` |
+| 1.2.20 | base | baseline | amd64 | musl | `lt1.2` |
+| 1.2.20 | base | baseline | arm64 | musl | `lt1.2` |
+| 1.2.20 | 10g | baseline | amd64 | musl | `lt1.2-10g` |
+| 1.2.20 | 10g | baseline | arm64 | musl | `lt1.2-10g` |
+| 1.2.20 | 10g | znver3 | amd64 | musl | `lt1.2-10g-znver3` |
+| 1.2.20 | 10g | znver3 | amd64 | mimalloc | `lt1.2-10g-znver3-mimalloc` |
+| 2.1.2 | base | baseline | amd64 | musl | `lt2.1` |
+| 2.1.2 | base | baseline | arm64 | musl | `lt2.1` |
+| 2.1.2 | 10g | baseline | amd64 | musl | `lt2.1-10g` |
+| 2.1.2 | 10g | baseline | arm64 | musl | `lt2.1-10g` |
+| 2.1.2 | 10g | znver3 | amd64 | musl | `lt2.1-10g-znver3` |
 
 The default and `10g` profiles differ only in two compile-only libtorrent defaults
 (`send_not_sent_low_watermark` and `max_peer_recv_buffer_size`); four other
@@ -116,7 +133,7 @@ docker run -d \
   -e QBT_WEBUI_PORT=8080 \
   -e QBT_TORRENTING_PORT=51413 \
   -p 8080:8080 -p 51413:51413 -p 51413:51413/udp \
-  ghcr.io/swizzin/qbittorrent:5.3.0-lt1.2.20
+  ghcr.io/swizzin/qbittorrent:lt1.2
 ```
 
 | item | value |
@@ -259,32 +276,32 @@ only with qemu binfmt registered, and then the whole compile runs emulated
 # base profile, baseline amd64, libtorrent 1.2.20 (the Dockerfile default line)
 docker buildx build --load --platform linux/amd64 \
   --build-arg PROFILE=base --build-arg MARCH=x86-64-v2 \
-  -t qbittorrent:5.3.0-lt1.2.20 .
+  -t qbittorrent:5.3.0-lt1.2 .
 
 # 10g profile, baseline amd64
 docker buildx build --load --platform linux/amd64 \
   --build-arg PROFILE=10g --build-arg MARCH=x86-64-v2 \
-  -t qbittorrent:5.3.0-lt1.2.20-10g .
+  -t qbittorrent:5.3.0-lt1.2-10g .
 
 # 10g profile, znver3 amd64 (the existing line), and its mimalloc A/B partner
 docker buildx build --load --platform linux/amd64 \
-  -t qbittorrent:5.3.0-lt1.2.20-10g-znver3 .
+  -t qbittorrent:5.3.0-lt1.2-10g-znver3 .
 docker buildx build --load --platform linux/amd64 \
   --build-arg ALLOCATOR=mimalloc \
-  -t qbittorrent:5.3.0-lt1.2.20-10g-znver3-mimalloc .
+  -t qbittorrent:5.3.0-lt1.2-10g-znver3-mimalloc .
 
 # the same on libtorrent 2.1.2: the line is LT_VERSION, everything else matches
 docker buildx build --load --platform linux/amd64 \
   --build-arg LT_VERSION=2.1.2 --build-arg PROFILE=base --build-arg MARCH=x86-64-v2 \
-  -t qbittorrent:5.3.0-lt2.1.2 .
+  -t qbittorrent:5.3.0-lt2.1 .
 docker buildx build --load --platform linux/amd64 \
   --build-arg LT_VERSION=2.1.2 \
-  -t qbittorrent:5.3.0-lt2.1.2-10g-znver3 .
+  -t qbittorrent:5.3.0-lt2.1-10g-znver3 .
 
 # arm64 (on an arm64 host)
 docker buildx build --load --platform linux/arm64 \
   --build-arg PROFILE=base \
-  -t qbittorrent:5.3.0-lt1.2.20-arm64 .
+  -t qbittorrent:5.3.0-lt1.2-arm64 .
 ```
 
 The build is done by [userdocs/qbittorrent-nox-static](https://github.com/userdocs/qbittorrent-nox-static)
@@ -311,8 +328,8 @@ real gate.
 ## Verifying
 
 ```sh
-hack/verify-binary.sh qbittorrent:5.3.0-lt1.2.20
-hack/smoke.sh        qbittorrent:5.3.0-lt1.2.20
+hack/verify-binary.sh qbittorrent:5.3.0-lt1.2
+hack/smoke.sh        qbittorrent:5.3.0-lt1.2
 ```
 
 `verify-binary.sh` inspects the stripped binary: qBittorrent and libtorrent

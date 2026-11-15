@@ -163,13 +163,18 @@ jobs:
           SHA="${GITHUB_SHA::12}"
           moving=()
           immutable=()
-          # <qbt>-lt<lt> and -lt<lt>-10g are the two multi-arch manifests each
-          # libtorrent line publishes; its immutable names are the same pairs
-          # with this commit in front and the line included.
+          # The default and 10g variants of each libtorrent line are multi-arch
+          # manifests. Each is assembled once under all of its moving names,
+          # comma-joined here: the versioned tag (whose -amd64/-arm64 images
+          # the legs pushed, and which comes first), the rolling tag, and
+          # `latest` for the one variant that carries it. Its immutable name is
+          # the variant with this commit in front.
           add() {
             eval "$(hack/versions.sh musl "$1" x86-64-v2 amd64 "$2")"
-            moving+=("${IMAGE_TAG}")
-            immutable+=("sha-${SHA}-lt${LT_VERSION}${SUFFIX}")
+            local names="${IMAGE_TAG},${VARIANT}"
+            if [ "${LATEST}" = "true" ]; then names="${names},latest"; fi
+            moving+=("${names}")
+            immutable+=("sha-${SHA}-${VARIANT}")
           }
           add base 1.2.20
           add 10g 1.2.20
@@ -186,16 +191,21 @@ jobs:
           read -ra moving <<< "${MOVING_TAGS}"
           read -ra immutable <<< "${IMMUTABLE_TAGS}"
 
-          # <tag>-amd64 and <tag>-arm64 become the multi-arch manifest <tag>.
+          # <source>-amd64 and <source>-arm64 become one multi-arch manifest,
+          # published under every name given after the source.
           assemble() {
-            docker buildx imagetools create --tag "${IMAGE}:${1}" \
-              "${IMAGE}:${1}-amd64" "${IMAGE}:${1}-arm64"
+            local source="$1" tags=() name
+            shift
+            for name in "$@"; do tags+=(--tag "${IMAGE}:${name}"); done
+            docker buildx imagetools create "${tags[@]}" \
+              "${IMAGE}:${source}-amd64" "${IMAGE}:${source}-arm64"
           }
 
           # The moving manifests are re-pointed at this commit's per-arch images
           # on every push to main.
-          for tag in "${moving[@]}"; do
-            assemble "${tag}"
+          for names in "${moving[@]}"; do
+            IFS=, read -ra name <<< "${names}"
+            assemble "${name[0]}" "${name[@]}"
           done
 
           # The immutable manifests are created once. Every one is checked
@@ -207,7 +217,7 @@ jobs:
             fi
           done
           for tag in "${immutable[@]}"; do
-            assemble "${tag}"
+            assemble "${tag}" "${tag}"
           done
 
       - name: Install cosign
@@ -222,8 +232,9 @@ jobs:
           read -ra immutable <<< "${IMMUTABLE_TAGS}"
           # The per-arch images were signed by the leg that pushed them; these
           # are the eight new digests (four moving, four immutable) this job
-          # created.
-          for tag in "${moving[@]}" "${immutable[@]}"; do
+          # created. A moving manifest's names all share one digest, so its
+          # versioned name stands for the rest.
+          for tag in "${moving[@]%%,*}" "${immutable[@]}"; do
             digest=$(docker buildx imagetools inspect "${IMAGE}:${tag}" \
               --format '{{.Manifest.Digest}}')
             printf 'signing %s: %s\n' "${tag}" "${digest}"

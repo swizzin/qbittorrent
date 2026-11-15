@@ -129,28 +129,35 @@ jobs:
       - name: Read versions from the Dockerfile
         run: hack/versions.sh "${{ inputs.allocator }}" "${{ inputs.profile }}" "${{ inputs.march }}" "${{ inputs.arch }}" "${{ inputs.lt }}" >> "${GITHUB_ENV}"
 
-      # Two tags per leg, one scheme for all of them (README, "Tags"):
+      # One scheme for every tag (README, "Tags"). VARIANT is the variant's
+      # name, lt<line>[-10g][-znver3][-mimalloc], and every tag is that name
+      # with something in front of it or nothing:
       #
-      #   immutable  sha-<12>-lt<lt>[-10g][-znver3][-mimalloc][-<arch>]   this commit
-      #   moving     <qbt>-lt<lt>[-10g][-znver3][-mimalloc]
+      #   rolling    <VARIANT>                    latest build, any qBittorrent
+      #   versioned  <qbt>-<VARIANT>              latest build of this qBittorrent
+      #   immutable  sha-<12>-<VARIANT>-<arch>    this commit, this leg
       #
       # A tag with no arch suffix is a multi-arch manifest, which the manifest
-      # job assembles; the multi-arch legs push their moving tag per arch so it
-      # has something to assemble. The immutable tag carries the libtorrent line
-      # as well as the suffix, because both lines build a default and a `10g`
-      # image and would otherwise collide on every commit. No two legs can
-      # assemble the same immutable name, and one line's tag never names another
-      # line's image.
+      # job assembles (rolling, versioned and `latest` alike, from the same
+      # inputs); a multi-arch leg pushes only its versioned tag per arch, as
+      # <qbt>-<VARIANT>-<arch>, so the manifest job has something to assemble.
+      # A single-image leg pushes its rolling and versioned tags itself. The
+      # immutable tag carries the libtorrent line as well as the suffix,
+      # because both lines build a default and a `10g` image and would
+      # otherwise collide on every commit.
       - name: Compute the push tags
         run: |
-          IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-lt${LT_VERSION}${SUFFIX}-${ARCH}"
+          IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-${VARIANT}-${ARCH}"
           if [ "${{ inputs.multi }}" = "true" ]; then
-            PUSH_TAG="${IMAGE_TAG}-${ARCH}"
+            PUSH_TAGS="${IMAGE_TAG}-${ARCH}"
           else
-            PUSH_TAG="${IMAGE_TAG}"
+            PUSH_TAGS="${IMAGE_TAG} ${VARIANT}"
+            if [ "${LATEST}" = "true" ]; then
+              PUSH_TAGS="${PUSH_TAGS} latest"
+            fi
           fi
           {
-            echo "PUSH_TAG=${PUSH_TAG}"
+            echo "PUSH_TAGS=${PUSH_TAGS}"
             echo "IMMUTABLE_TAG=${IMMUTABLE_TAG}"
           } >> "${GITHUB_ENV}"
 
@@ -200,10 +207,11 @@ jobs:
             printf 'refusing to re-push immutable tag %s: it already exists\n' "${IMMUTABLE_TAG}" >&2
             exit 1
           fi
-          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${PUSH_TAG}"
-          docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${IMMUTABLE_TAG}"
-          docker push "${IMAGE}:${PUSH_TAG}"
-          docker push "${IMAGE}:${IMMUTABLE_TAG}"
+          read -ra push_tags <<< "${PUSH_TAGS}"
+          for tag in "${IMMUTABLE_TAG}" "${push_tags[@]}"; do
+            docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${tag}"
+            docker push "${IMAGE}:${tag}"
+          done
 
       - name: Install cosign
         if: github.ref == 'refs/heads/main'

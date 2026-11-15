@@ -12,23 +12,31 @@
 # impossible combination fails here instead of assembling a tag that names
 # something the build then refuses (or worse, something it does not build).
 #
-# LT is the libtorrent line, given as its exact tag version (1.2.20 or 2.1.2).
+# LT is the libtorrent release, given as its exact version (1.2.20 or 2.1.2).
 # It defaults to the Dockerfile's LT_VERSION pin, and it is only accepted when
 # this repository carries a patch pair for it: patches/libtorrent/<lt>/ is the
-# directory the build script reads for -lt v<lt>, so a line without one cannot
-# produce the image its tag claims.
+# directory the build script reads for -lt v<lt>, so a release without one
+# cannot produce the image its tag claims.
 #
-# Two names are derived from the axes:
+# Tags name the libtorrent line (major.minor: 1.2, 2.1), never the patch
+# release. A libtorrent patch bump re-points a variant's tags exactly as an
+# OpenSSL, Boost or Qt bump does; the exact versions are in /app/BUILD-INFO and
+# the image's labels. The names derived from the axes:
 #
+#   LT_LINE      1.2 | 2.1
 #   SUFFIX       "" | -10g | -10g-znver3 | -10g-znver3-mimalloc
-#   IMAGE_TAG    <qbt>-lt<lt><SUFFIX>
+#   VARIANT      lt<line><SUFFIX>          the rolling tag, any qBittorrent
+#   IMAGE_TAG    <qbt>-<VARIANT>           the versioned tag
+#   LATEST       true for the one variant `latest` also names
 #
-# The default profile has no name in any tag: the image people pull by default
-# is just <qbt>-lt<lt>. Immutable tags carry the same suffix after this commit
-# and the libtorrent line, sha-<12>-lt<lt><SUFFIX>, and a single image adds
-# -<arch> (see the README's tags table). ARCH deliberately never appears in
-# IMAGE_TAG: the default and 10g baseline tags are multi-arch manifests that
-# combine amd64 and arm64 under one name.
+# Every published tag is VARIANT with something in front of it or nothing:
+# the rolling tag is VARIANT itself, the versioned tag puts the qBittorrent
+# version in front, the immutable tag puts the commit in front
+# (sha-<12>-<VARIANT>), and a single image appends -<arch> (see the README's
+# tags table). The default profile has no name in any tag. `latest` is the
+# default profile on the Dockerfile's own LT_VERSION line. ARCH deliberately
+# never appears in VARIANT: the default and 10g baseline tags are multi-arch
+# manifests that combine amd64 and arm64 under one name.
 
 set -euo pipefail
 
@@ -46,7 +54,8 @@ allocator="${1:-musl}"
 profile="${2:-$(arg PROFILE)}"
 march="${3:-$(arg MARCH)}"
 arch="${4:-amd64}"
-lt="${5:-$(arg LT_VERSION)}"
+default_lt="$(arg LT_VERSION)"
+lt="${5:-${default_lt}}"
 
 case "${allocator}" in
     musl|mimalloc) ;;
@@ -78,7 +87,14 @@ case "${arch}:${march}" in
         ;;
 esac
 
-# The libtorrent line has to be one this repository has patches for. A tag that
+# A tag names the line, the release's first two numbers, so the release has to
+# have exactly three.
+if [[ ! ${lt} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'versions: libtorrent %q is not a major.minor.patch release\n' "${lt}" >&2
+    exit 1
+fi
+
+# The libtorrent release has to be one this repository has patches for. A tag that
 # names a libtorrent the build carries no compiled defaults for would be an
 # image built on a different recipe under the same name.
 if [[ ! -f ${repo_root}/patches/libtorrent/${lt}/patch \
@@ -102,9 +118,14 @@ suffix=""
 [[ ${allocator} == "mimalloc" ]] && suffix="${suffix}-mimalloc"
 
 qbt=$(arg QBT_VERSION)
+line="${lt%.*}"
+variant="lt${line}${suffix}"
+latest=false
+[[ -z ${suffix} && ${line} == "${default_lt%.*}" ]] && latest=true
 
 printf 'QBT_VERSION=%q\n' "${qbt}"
 printf 'LT_VERSION=%q\n' "${lt}"
+printf 'LT_LINE=%q\n' "${line}"
 printf 'PROFILE=%q\n' "${profile}"
 printf 'MARCH=%q\n' "${march}"
 printf 'ARCH=%q\n' "${arch}"
@@ -114,4 +135,6 @@ printf 'ALLOCATOR=%q\n' "${allocator}"
 printf 'SUFFIX=%s\n' "${suffix}"
 printf 'MIMALLOC_TAG=%q\n' "$(arg MIMALLOC_TAG)"
 printf 'MIMALLOC_SHA256=%q\n' "$(arg MIMALLOC_SHA256)"
-printf 'IMAGE_TAG=%q\n' "${qbt}-lt${lt}${suffix}"
+printf 'VARIANT=%q\n' "${variant}"
+printf 'IMAGE_TAG=%q\n' "${qbt}-${variant}"
+printf 'LATEST=%q\n' "${latest}"
