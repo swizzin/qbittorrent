@@ -15,7 +15,6 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 eval "$("${repo_root}/hack/versions.sh")"
 qbt_re=${QBT_VERSION//./\\.}
-lt_re=${LT_VERSION//./\\.}
 
 image="${1:-}"
 if [[ -z ${image} ]]; then
@@ -52,6 +51,13 @@ docker run -d --name "${name}" \
     -e QBT_WEBUI_PORT="${webui_port}" \
     -e QBT_TORRENTING_PORT=6881 \
     "${image}" >/dev/null
+
+# Two libtorrent lines are built, each with its own version string, so the
+# image's own BUILD-INFO says which one this is; the Dockerfile default is only
+# a fallback for an image that predates the field.
+lt=$(docker exec "${name}" sed -n 's/^libtorrent=//p' /app/BUILD-INFO 2>/dev/null || true)
+lt="${lt:-${LT_VERSION}}"
+lt_re=${lt//./\\.}
 
 # --------------------------------------------------------------------------
 # wait for the WebUI
@@ -123,9 +129,9 @@ fi
 build_info=$(api /api/v2/app/buildInfo)
 printf 'API /app/buildInfo: %s\n' "${build_info}"
 if grep -Eq "\"libtorrent\":\"${lt_re}(\\.[0-9]+)?\"" <<<"${build_info}"; then
-    ok "API reports libtorrent ${LT_VERSION}"
+    ok "API reports libtorrent ${lt}"
 else
-    bad "API reports libtorrent ${LT_VERSION} (got: ${build_info})"
+    bad "API reports libtorrent ${lt} (got: ${build_info})"
 fi
 
 # --------------------------------------------------------------------------

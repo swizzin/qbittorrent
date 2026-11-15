@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1.7
 #
-# qBittorrent on libtorrent 1.2 (versions below), statically linked against musl.
+# qBittorrent on libtorrent (two lines, versions below), statically linked
+# against musl.
 #
 # The image is built in two compiled libtorrent profiles (base and 10g) across
-# two targets: amd64 (baseline x86-64-v2 or znver3) and arm64 (aarch64). The
-# allocator is a further axis: musl (the default) or, for the 10g-znver3 amd64
-# line only, mimalloc.
+# two targets: amd64 (baseline x86-64-v2 or znver3) and arm64 (aarch64). Two
+# libtorrent lines are maintained side by side, 1.2.20 and 2.1.2, each with its
+# own compiled-defaults patch pair. The allocator is a further axis on the 1.2.20
+# line only: musl (the default) or, for its 10g-znver3 amd64 variant, mimalloc.
 #
 # The build is done by userdocs/qbittorrent-nox-static, pinned to a commit and
 # to the sha256 of the script itself. Patches are taken from this repository
@@ -17,13 +19,25 @@
 
 # The versions. Updating qBittorrent is a change to QBT_VERSION and nothing else.
 ARG QBT_VERSION=5.3.0
+
+# The libtorrent line, as its exact tag version. Both lines are built and
+# maintained side by side:
+#
+#   1.2.20  the line the allocator A/B and the znver3 images started on
+#   2.1.2   the 2.1 line (musl only; no mimalloc)
+#
+# Each has its own compiled-defaults patch pair under
+# patches/libtorrent/<version>/, which is also the directory the build script
+# reads when it is given -lt v<version>, so the version and the patch always
+# travel together. A version with no pair there is a build error.
 ARG LT_VERSION=1.2.20
 
-# The allocator is the one axis of the A/B image pair. musl (the default) keeps
-# musl's own malloc; mimalloc links mimalloc v3.5.4 as a statically linked
-# drop-in replacement. Everything else (versions, the libtorrent patch, the
-# -march target, the runtime) is identical across the two variants. mimalloc is
-# only valid for the 10g-znver3 amd64 line. Any other value fails the build.
+# The allocator is the one axis of the A/B image pair, and it exists on the
+# 1.2.20 line only. musl (the default) keeps musl's own malloc; mimalloc links
+# mimalloc v3.5.4 as a statically linked drop-in replacement. Everything else
+# (versions, the libtorrent patch, the -march target, the runtime) is identical
+# across the two variants. mimalloc is only valid for the 1.2.20 10g-znver3
+# amd64 line. Any other value fails the build.
 ARG ALLOCATOR=musl
 
 # The compiled libtorrent profile. base and 10g differ only in the two
@@ -65,10 +79,12 @@ ARG PROFILE
 ARG QBT_TAG=release-${QBT_VERSION}
 ARG LT_TAG=v${LT_VERSION}
 
-# OpenSSL is pinned to the 3.5 LTS line. libtorrent 1.2 pulls Boost 1.86,
-# whose asio TLS hostname verification reads ASN1_STRING fields directly;
-# OpenSSL 4.x made those types opaque, so 4.x does not compile. 3.5 is the
-# supported LTS line (3.4 went end-of-life in October 2026).
+# OpenSSL is pinned to the 3.5 LTS line for both libtorrent lines. libtorrent
+# 1.2 pulls Boost 1.86, whose asio TLS hostname verification reads ASN1_STRING
+# fields directly; OpenSSL 4.x made those types opaque, so 4.x does not compile.
+# The 2.1 line takes a newer Boost from the same script, but one OpenSSL pin for
+# both lines is one thing to reason about, and 3.5 is the supported LTS line
+# (3.4 went end-of-life in October 2026).
 ARG OPENSSL_TAG=openssl-3.5.9
 
 # userdocs/qbittorrent-nox-static @ 66a0aa3fd2044dcd2a327670aba35779b0957e34
@@ -78,7 +94,8 @@ ARG QBT_STATIC_SCRIPT_SHA256=0a865a0c09b2621feb05f0e16b9ac29263d7b3bdd0a1e3b8b8b
 # libiconv is the one module the script resolves through ftpmirror.gnu.org's
 # redirector, which hands out mirrors that are not always reachable. The source
 # is therefore pinned here and handed to the script through its cache-directory
-# option instead.
+# option instead. Only the 1.2 line builds it (the script drops iconv for 2.x);
+# it is fetched for both so the cache step below is unconditional and identical.
 ARG ICONV_VERSION=1.18
 ARG ICONV_SHA256=3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8
 
@@ -113,12 +130,16 @@ RUN case "${ALLOCATOR}" in \
         base|10g) ;; \
         *) printf 'PROFILE must be "base" or "10g", got: %s\n' "${PROFILE}" >&2; exit 1;; \
     esac; \
+    case "${LT_VERSION}" in \
+        1.2.20|2.1.2) ;; \
+        *) printf 'LT_VERSION must be "1.2.20" or "2.1.2", got: %s\n' "${LT_VERSION}" >&2; exit 1;; \
+    esac; \
     case "${TARGETARCH}" in \
         amd64|arm64) ;; \
         *) printf 'TARGETARCH must be "amd64" or "arm64", got: %s\n' "${TARGETARCH}" >&2; exit 1;; \
     esac; \
-    if [ "${ALLOCATOR}" = "mimalloc" ] && { [ "${PROFILE}" != "10g" ] || [ "${MARCH}" != "znver3" ] || [ "${TARGETARCH}" != "amd64" ]; }; then \
-        printf 'mimalloc is only built for the 10g-znver3 amd64 line\n' >&2; exit 1; \
+    if [ "${ALLOCATOR}" = "mimalloc" ] && { [ "${LT_VERSION}" != "1.2.20" ] || [ "${PROFILE}" != "10g" ] || [ "${MARCH}" != "znver3" ] || [ "${TARGETARCH}" != "amd64" ]; }; then \
+        printf 'mimalloc is only built for the 1.2.20 10g-znver3 amd64 line\n' >&2; exit 1; \
     fi
 
 # Fetched, not copied: COPY cannot read a URL, and --checksum is what pins the
@@ -150,9 +171,9 @@ RUN set -eux; \
 #    script's cross-compilation; qbt_host_deps=yes pulls the Qt host tools from
 #    userdocs/qbt-host-deps (published for both x86_64 and aarch64 hosts) so no
 #    qemu is needed to compile, whichever host the build stage runs on.
-# 2. install the libtorrent patch for the selected profile. A local patch file
-#    takes priority over the script's remote patch repository, so the build is
-#    reproducible.
+# 2. install the libtorrent patch for the selected line and profile. A local
+#    patch file takes priority over the script's remote patch repository, so the
+#    build is reproducible.
 # 3. qBittorrent is built from its upstream tag with no patches. The script
 #    falls back to fetching patches from its own repository for a tag it has no
 #    local patch for, so the version's patch directory gets a comment-only

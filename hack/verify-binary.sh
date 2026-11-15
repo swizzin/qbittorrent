@@ -9,9 +9,9 @@
 # promises. Exits non-zero on any failure and prints PASS at the end.
 #
 # The image identifies its own build axes through /app/BUILD-INFO (profile,
-# arch, march, allocator). amd64 binaries are executed; an arm64 binary cannot
-# run on an amd64 host without qemu binfmt, so set QBT_VERIFY_RUN=0 to fall
-# back to static inspection for a foreign-arch image.
+# arch, march, allocator, libtorrent line). amd64 binaries are executed; an arm64
+# binary cannot run on an amd64 host without qemu binfmt, so set QBT_VERIFY_RUN=0
+# to fall back to static inspection for a foreign-arch image.
 
 set -euo pipefail
 
@@ -64,7 +64,9 @@ bin="${tmpdir}/qbittorrent-nox"
 
 # The image identifies its own build axes through BUILD-INFO. Older images
 # predate the profile/arch fields and are therefore the 10g amd64 variant; the
-# allocator field predates everything and defaults to musl when absent.
+# allocator field predates everything and defaults to musl when absent. The
+# libtorrent line is read from BUILD-INFO too: two lines are built, each with its
+# own patch pair, so the image itself says which one it was built on.
 allocator=$(sed -n 's/^allocator=//p' "${tmpdir}/BUILD-INFO")
 allocator="${allocator:-musl}"
 profile=$(sed -n 's/^profile=//p' "${tmpdir}/BUILD-INFO")
@@ -73,6 +75,8 @@ arch=$(sed -n 's/^arch=//p' "${tmpdir}/BUILD-INFO")
 arch="${arch:-amd64}"
 march=$(sed -n 's/^march=//p' "${tmpdir}/BUILD-INFO")
 march="${march:-znver3}"
+lt=$(sed -n 's/^libtorrent=//p' "${tmpdir}/BUILD-INFO")
+lt="${lt:-${LT_VERSION}}"
 case "${allocator}" in
     musl|mimalloc) ;;
     *) printf 'verify-binary: unknown allocator %q in BUILD-INFO\n' "${allocator}" >&2; exit 2 ;;
@@ -81,7 +85,15 @@ case "${profile}" in
     base|10g) ;;
     *) printf 'verify-binary: unknown profile %q in BUILD-INFO\n' "${profile}" >&2; exit 2 ;;
 esac
-printf 'profile: %s  arch: %s  march: %s  allocator: %s\n\n' "${profile}" "${arch}" "${march}" "${allocator}"
+# mimalloc is built on the 1.2.20 line only, and the Dockerfile and
+# hack/versions.sh both refuse any other combination, so an image claiming it on
+# another libtorrent line is describing a build this repository cannot make.
+if [[ ${allocator} == "mimalloc" && ${lt} != "1.2.20" ]]; then
+    printf 'verify-binary: BUILD-INFO claims mimalloc on libtorrent %s, but mimalloc is the 1.2.20 line only\n' "${lt}" >&2
+    exit 2
+fi
+printf 'profile: %s  arch: %s  march: %s  allocator: %s  libtorrent: %s\n\n' \
+    "${profile}" "${arch}" "${march}" "${allocator}" "${lt}"
 
 # Whether the binary can be executed here. amd64 runs natively; arm64 needs
 # qemu binfmt on this host. QBT_VERIFY_RUN=0 forces static-only checks.
@@ -108,10 +120,10 @@ else
 fi
 
 lt_versions=$(grep -ao 'libtorrent/[0-9][0-9.]*' "${bin}" | sort -u || true)
-if [[ ${lt_versions} == "libtorrent/${LT_VERSION}" || ${lt_versions} == "libtorrent/${LT_VERSION}.0" ]]; then
-    ok "binary carries libtorrent ${LT_VERSION} (${lt_versions})"
+if [[ ${lt_versions} == "libtorrent/${lt}" || ${lt_versions} == "libtorrent/${lt}.0" ]]; then
+    ok "binary carries libtorrent ${lt} (${lt_versions})"
 else
-    bad "binary carries libtorrent ${LT_VERSION} (found: ${lt_versions:-nothing})"
+    bad "binary carries libtorrent ${lt} (found: ${lt_versions:-nothing})"
 fi
 
 # --------------------------------------------------------------------------
@@ -210,9 +222,14 @@ fi
 # provenance: the patches in this repository are the patches that were built
 # --------------------------------------------------------------------------
 case "${profile}" in
-    base) patch_file="${repo_root}/patches/libtorrent/${LT_VERSION}/base.patch" ;;
-    10g) patch_file="${repo_root}/patches/libtorrent/${LT_VERSION}/patch" ;;
+    base) patch_file="${repo_root}/patches/libtorrent/${lt}/base.patch" ;;
+    10g) patch_file="${repo_root}/patches/libtorrent/${lt}/patch" ;;
 esac
+if [[ ! -f ${patch_file} ]]; then
+    printf 'verify-binary: no patch pair for libtorrent %s in this repository (%s)\n' \
+        "${lt}" "${patch_file}" >&2
+    exit 2
+fi
 lt_patch_sha=$(sha256sum "${patch_file}" | cut -d' ' -f1)
 expect "BUILD-INFO records this repo's libtorrent patch" \
     grep -qx "libtorrent_patch_sha256=${lt_patch_sha}" "${tmpdir}/BUILD-INFO"
@@ -224,8 +241,8 @@ expect "BUILD-INFO records arch=${arch}" \
     grep -qx "arch=${arch}" "${tmpdir}/BUILD-INFO"
 expect "BUILD-INFO records march=${march}" \
     grep -qx "march=${march}" "${tmpdir}/BUILD-INFO"
-expect "BUILD-INFO records libtorrent=${LT_VERSION}" \
-    grep -qx "libtorrent=${LT_VERSION}" "${tmpdir}/BUILD-INFO"
+expect "BUILD-INFO records libtorrent=${lt}" \
+    grep -qx "libtorrent=${lt}" "${tmpdir}/BUILD-INFO"
 expect "BUILD-INFO records allocator=${allocator}" \
     grep -qx "allocator=${allocator}" "${tmpdir}/BUILD-INFO"
 if [[ ${allocator} == "mimalloc" ]]; then

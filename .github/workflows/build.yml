@@ -37,24 +37,39 @@ jobs:
     # jobs on the project's runner, against a 6-hour job limit, so 4 vCPUs is
     # still nowhere near it; disk (~20 GiB) is the constraint to watch.
     #
-    # The znver3 pair stays on the self-hosted runner, the only machine known to
+    # The znver3 legs stay on the self-hosted runner, the only machine known to
     # be Zen 3. Those binaries use AVX2/BMI2, so running their smoke test on an
     # Intel or an older AMD host is a SIGILL, not a test.
+    #
+    # Two libtorrent lines are built: 1.2.20 (six legs, including the allocator
+    # A/B) and 2.1.2 (five legs, musl only). Each line's baseline legs are one
+    # multi-arch manifest over amd64 and arm64; its 10g-znver3 leg is a single
+    # image.
     runs-on: ${{ matrix.runs_on }}
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
         include:
+          # libtorrent 1.2.20 — the line the A/B pair and the znver3 images
+          # started on. These tags must not move or change shape.
           # base profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
-          - { name: base-amd64,          profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
-          - { name: base-arm64,          profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
+          - { name: lt1.2.20-base-amd64,          lt: 1.2.20, profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: lt1.2.20-base-arm64,          lt: 1.2.20, profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
           # 10g profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
-          - { name: 10g-amd64,           profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
-          - { name: 10g-arm64,           profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
+          - { name: lt1.2.20-10g-amd64,           lt: 1.2.20, profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: lt1.2.20-10g-arm64,           lt: 1.2.20, profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
           # 10g profile, znver3 (amd64 only; the existing A/B line, unchanged)
-          - { name: 10g-znver3-musl,     profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
-          - { name: 10g-znver3-mimalloc, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+          - { name: lt1.2.20-10g-znver3-musl,     lt: 1.2.20, profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+          - { name: lt1.2.20-10g-znver3-mimalloc, lt: 1.2.20, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+          # libtorrent 2.1.2 — the 2.1 line: base and 10g baselines as manifests,
+          # plus the znver3 single image. No mimalloc (the allocator A/B is a
+          # 1.2.20 experiment).
+          - { name: lt2.1.2-base-amd64,           lt: 2.1.2,  profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: lt2.1.2-base-arm64,           lt: 2.1.2,  profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
+          - { name: lt2.1.2-10g-amd64,            lt: 2.1.2,  profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: lt2.1.2-10g-arm64,            lt: 2.1.2,  profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
+          - { name: lt2.1.2-10g-znver3-musl,      lt: 2.1.2,  profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
     # Signing is keyless (see "Sign the pushed digests"), which is what the OIDC
     # token is for. It is granted on this job and on the manifest job, the two
     # that push, and nowhere else: the build job already holds packages: write,
@@ -94,21 +109,23 @@ jobs:
           fi
 
       - name: Read versions from the Dockerfile
-        run: hack/versions.sh "${{ matrix.allocator }}" "${{ matrix.profile }}" "${{ matrix.march }}" "${{ matrix.arch }}" >> "${GITHUB_ENV}"
+        run: hack/versions.sh "${{ matrix.allocator }}" "${{ matrix.profile }}" "${{ matrix.march }}" "${{ matrix.arch }}" "${{ matrix.lt }}" >> "${GITHUB_ENV}"
 
       # Two tags per leg, one scheme for all of them (README, "Tags"):
       #
-      #   immutable  sha-<12>-<variant>[-<arch>]   this commit, this variant
+      #   immutable  sha-<12>-lt<lt>-<variant>[-<arch>]   this commit, this variant
       #   moving     <qbt>-lt<lt>[-10g][-znver3][-mimalloc]   the variant
       #
       # A tag with no arch suffix is a multi-arch manifest, which the manifest
       # job assembles; the multi-arch legs push their moving tag per arch so it
-      # has something to assemble. No two legs can assemble the same immutable
-      # name: the variant already carries the profile, the microarchitecture and
-      # the allocator, and the arch is appended to it.
+      # has something to assemble. The immutable tag carries the libtorrent line
+      # as well as the variant, because both lines build a `base` and a `10g`
+      # variant and would otherwise collide on every commit. No two legs can
+      # assemble the same immutable name, and one line's tag never names another
+      # line's image.
       - name: Compute the push tags
         run: |
-          IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-${VARIANT}-${ARCH}"
+          IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-lt${LT_VERSION}-${VARIANT}-${ARCH}"
           if [ "${{ matrix.multi }}" = "true" ]; then
             PUSH_TAG="${IMAGE_TAG}-${ARCH}"
           else
@@ -133,6 +150,7 @@ jobs:
             --platform "${{ matrix.platform }}" \
             --progress=plain \
             --build-arg BUILD_JOBS="${jobs}" \
+            --build-arg LT_VERSION="${{ matrix.lt }}" \
             --build-arg ALLOCATOR="${{ matrix.allocator }}" \
             --build-arg PROFILE="${{ matrix.profile }}" \
             --build-arg MARCH="${{ matrix.march }}" \
@@ -223,22 +241,31 @@ jobs:
       - name: Compute manifest tags
         run: |
           SHA="${GITHUB_SHA::12}"
-          eval "$(hack/versions.sh musl base x86-64-v2 amd64)"
-          BASE_TAG="${IMAGE_TAG}"
-          BASE_IMMUTABLE="sha-${SHA}-${VARIANT}"
-          eval "$(hack/versions.sh musl 10g x86-64-v2 amd64)"
-          TENG_TAG="${IMAGE_TAG}"
-          TENG_IMMUTABLE="sha-${SHA}-${VARIANT}"
+          moving=()
+          immutable=()
+          # <qbt>-lt<lt> and -lt<lt>-10g are the two multi-arch manifests each
+          # libtorrent line publishes; its immutable names are the same pairs
+          # with this commit in front and the line included.
+          add() {
+            eval "$(hack/versions.sh musl "$1" x86-64-v2 amd64 "$2")"
+            moving+=("${IMAGE_TAG}")
+            immutable+=("sha-${SHA}-lt${LT_VERSION}-${VARIANT}")
+          }
+          add base 1.2.20
+          add 10g 1.2.20
+          add base 2.1.2
+          add 10g 2.1.2
           {
-            echo "BASE_TAG=${BASE_TAG}"
-            echo "BASE_IMMUTABLE=${BASE_IMMUTABLE}"
-            echo "TENG_TAG=${TENG_TAG}"
-            echo "TENG_IMMUTABLE=${TENG_IMMUTABLE}"
+            echo "MOVING_TAGS=${moving[*]}"
+            echo "IMMUTABLE_TAGS=${immutable[*]}"
           } >> "${GITHUB_ENV}"
 
       - name: Assemble manifests
         run: |
           set -eu
+          read -ra moving <<< "${MOVING_TAGS}"
+          read -ra immutable <<< "${IMMUTABLE_TAGS}"
+
           # <tag>-amd64 and <tag>-arm64 become the multi-arch manifest <tag>.
           assemble() {
             docker buildx imagetools create --tag "${IMAGE}:${1}" \
@@ -247,19 +274,21 @@ jobs:
 
           # The moving manifests are re-pointed at this commit's per-arch images
           # on every push to main.
-          assemble "${BASE_TAG}"
-          assemble "${TENG_TAG}"
+          for tag in "${moving[@]}"; do
+            assemble "${tag}"
+          done
 
-          # The immutable manifests are created once. Both are checked before
-          # either is created, so a refusal leaves the registry as it was.
-          for tag in "${BASE_IMMUTABLE}" "${TENG_IMMUTABLE}"; do
+          # The immutable manifests are created once. Every one is checked
+          # before any is created, so a refusal leaves the registry as it was.
+          for tag in "${immutable[@]}"; do
             if docker buildx imagetools inspect "${IMAGE}:${tag}" >/dev/null 2>&1; then
               printf 'refusing to re-push immutable tag %s: it already exists\n' "${tag}" >&2
               exit 1
             fi
           done
-          assemble "${BASE_IMMUTABLE}"
-          assemble "${TENG_IMMUTABLE}"
+          for tag in "${immutable[@]}"; do
+            assemble "${tag}"
+          done
 
       - name: Install cosign
         uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.1
@@ -269,9 +298,12 @@ jobs:
       - name: Sign the assembled manifests
         run: |
           set -eu
+          read -ra moving <<< "${MOVING_TAGS}"
+          read -ra immutable <<< "${IMMUTABLE_TAGS}"
           # The per-arch images were signed by the leg that pushed them; these
-          # are the four new digests (two moving, two immutable) this job created.
-          for tag in "${BASE_TAG}" "${TENG_TAG}" "${BASE_IMMUTABLE}" "${TENG_IMMUTABLE}"; do
+          # are the eight new digests (four moving, four immutable) this job
+          # created.
+          for tag in "${moving[@]}" "${immutable[@]}"; do
             digest=$(docker buildx imagetools inspect "${IMAGE}:${tag}" \
               --format '{{.Manifest.Digest}}')
             printf 'signing %s: %s\n' "${tag}" "${digest}"
