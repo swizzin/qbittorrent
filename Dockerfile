@@ -216,8 +216,11 @@ RUN set -eux; \
 # MI_SECURE=OFF and a Release build keep mimalloc at its default behaviour. It
 # is compiled with the same per-target flags as everything else below: arm64 is
 # the armv8-a baseline, an amd64 baseline (-march=x86-64-v2) tunes for generic,
-# and a znver3 build tunes for znver3. The build fails unless the -march is
-# actually recorded in the object.
+# and a znver3 build tunes for znver3. MI_NO_OPT_ARCH keeps mimalloc's own
+# target out of it: by default its CMake adds -march=armv8.1-a on arm64 (for
+# LSE atomics), which would make the baseline image fault on an ARMv8.0 core
+# such as the Cortex-A72. The build fails unless our -march is recorded in the
+# object and no other -march is.
 RUN set -eux; \
     if [ "${ALLOCATOR}" = "mimalloc" ]; then \
         if [ "${TARGETARCH}" = "arm64" ]; then \
@@ -244,10 +247,17 @@ RUN set -eux; \
             -DMI_SECURE=OFF \
             -DMI_DEBUG=OFF \
             -DMI_LIBC_MUSL=ON \
+            -DMI_NO_OPT_ARCH=ON \
             -DCMAKE_C_FLAGS="${flags}"; \
         cmake --build /build/mimalloc/build; \
         test -s /build/mimalloc/build/mimalloc.o; \
-        readelf -p .GCC.command.line /build/mimalloc/build/mimalloc.o | grep -qF -- "-march=${march}"; \
+        readelf -p .GCC.command.line /build/mimalloc/build/mimalloc.o > /build/mimalloc/cmdline.txt; \
+        grep -qF -- "-march=${march}" /build/mimalloc/cmdline.txt; \
+        if awk -v m="-march=${march}" '{ for (i = 1; i <= NF; i++) if ($i ~ /^-march=/ && $i != m) bad = 1 } END { exit !bad }' /build/mimalloc/cmdline.txt; then \
+            printf 'mimalloc.o was compiled for another target as well as %s:\n' "${march}" >&2; \
+            grep -oE -- '-march=[^ ]+' /build/mimalloc/cmdline.txt >&2; \
+            exit 1; \
+        fi; \
     fi
 
 # The script appends CFLAGS/CXXFLAGS/LDFLAGS from the environment to its own
