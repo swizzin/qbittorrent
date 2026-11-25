@@ -10,7 +10,7 @@ seedbox) — across two targets: **amd64** (baseline `x86-64-v2` or `znver3`) an
 **arm64** (`aarch64`), each built natively on its own architecture. Each line
 also has its own compiled-defaults patch pair, because a 1.2 patch does not apply
 to 2.x. The allocator follows the profile, on both lines and both targets: the
-default profile keeps musl's own malloc, `10g` links **mimalloc** v3.5.4
+default profile keeps musl's own malloc, `10g` links **mimalloc** v3.7.1
 statically as a drop-in replacement.
 
 It is a drop-in replacement for a `qbittorrent-nox` container: same binary
@@ -219,23 +219,22 @@ the build will not produce.
 - `ALLOCATOR=musl`: musl's own malloc. This is what every default-profile image
   carries.
 - `ALLOCATOR=mimalloc` (the default, matching `PROFILE=10g`):
-  [mimalloc](https://github.com/microsoft/mimalloc) **v3.5.4**, compiled to a
+  [mimalloc](https://github.com/microsoft/mimalloc) **v3.7.1**, compiled to a
   single object file (`MI_BUILD_OBJECT`) with `MI_OVERRIDE=ON` and
   `MI_LIBC_MUSL=ON`, and linked on the final link line through `LDFLAGS`.
   Because the linker only pulls musl's `malloc.o`/`free.o`/… out of `libc.a` to
   satisfy an undefined symbol, and mimalloc's object is linked before `libc.a`,
   mimalloc replaces `malloc`/`free`/`calloc`/`realloc`/`aligned_alloc`/
   `posix_memalign`/`memalign`/`malloc_usable_size` cleanly — no `-z muldefs`.
-  `MI_SECURE=OFF`, no debug, Release, and `MI_STATS=OFF`: a Release build of
-  3.5.x otherwise counts every allocation and free for its statistics, which
-  this image never reads. The build checks mimalloc's own configure output for
-  it, and `BUILD-INFO` records it (`mimalloc_stats=off`). Sampled profiling
-  stays at its default level, where it samples only on the slow path that
-  refills a page, never per allocation (3.5.4 does not compile with it off).
+  `MI_SECURE=OFF`, no debug, Release, and `MI_STATS=OFF` and `MI_PROFILE=OFF`:
+  a Release build otherwise counts every allocation and free for its
+  statistics and samples allocations for its profiler, neither of which this
+  image reads. The build checks mimalloc's own configure output for both, and
+  `BUILD-INFO` records them (`mimalloc_stats=off`, `mimalloc_profile=off`).
   `MI_NO_OPT_ARCH=ON` keeps mimalloc from adding a CPU target of its own. No
   `MIMALLOC_*` environment variables are set at runtime.
 
-  mimalloc is pinned to **v3.5.4**, and moving it is a change of its own: its
+  mimalloc is pinned to **v3.7.1**, and moving it is a change of its own: its
   build defaults are read again each time, because a plain Release build is not
   the plain allocator (see the options above). The release tarball is pinned by
   sha256 (`MIMALLOC_TAG` + `MIMALLOC_SHA256` in the Dockerfile), and the object
@@ -268,7 +267,7 @@ apply. Adding a third line means its patch pair plus a value in the
 `hack/versions.sh` accepts a line only when its patch pair is present, so a tag
 can never name a libtorrent the build has no defaults for. OpenSSL: change
 `OPENSSL_TAG` (it is shared by both lines). mimalloc: change `MIMALLOC_TAG` and
-`MIMALLOC_SHA256` together (stay on a 3.5.x with no always-on profiler). Qt and
+`MIMALLOC_SHA256` together, and re-read its CMake defaults (above). Qt and
 Boost are chosen by the pinned build script: for 1.2 it pins Boost 1.86, for 2.1
 it takes the newest Boost release and Qt 6.x, so a 2.1 image's Boost and Qt
 version is whatever the pinned script resolves that day. Moving to a newer build

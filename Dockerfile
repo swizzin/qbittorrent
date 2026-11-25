@@ -35,7 +35,7 @@ ARG LT_VERSION=1.2.20
 # The memory allocator, as a build arg because the image records it in
 # BUILD-INFO and its OCI description and hack/verify-binary.sh reads it back.
 # It is not a free axis: it follows the profile. base keeps musl's own malloc;
-# 10g links mimalloc v3.5.4 as a statically linked drop-in replacement, on every
+# 10g links mimalloc v3.7.1 as a statically linked drop-in replacement, on every
 # libtorrent line and every target, so a 10g tag names one allocator and no tag
 # has to say which. Any pairing other than base+musl or 10g+mimalloc fails the
 # build, and so does any other value. The default matches the default PROFILE
@@ -109,12 +109,12 @@ ARG QBT_STATIC_SCRIPT_SHA256=0a865a0c09b2621feb05f0e16b9ac29263d7b3bdd0a1e3b8b8b
 ARG ICONV_VERSION=1.18
 ARG ICONV_SHA256=3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8
 
-# mimalloc, the allocator every 10g build links. v3.5.4 is the last of the 3.5
-# line: v3.6.0 added a profiler that is always on, and an allocator that is the
-# plain default of a profile should not carry one. The release tarball is pinned
-# by sha256 like the other sources.
-ARG MIMALLOC_TAG=v3.5.4
-ARG MIMALLOC_SHA256=36e9b5bf1bb703567a0347491721ce2098000db8284dc55cd53d211452723cdb
+# mimalloc, the allocator every 10g build links. A Release build of it is not
+# the plain allocator by default (statistics and sampled profiling are on; see
+# the mimalloc stage below), so a bump re-reads its CMake defaults. The release
+# tarball is pinned by sha256 like the other sources.
+ARG MIMALLOC_TAG=v3.7.1
+ARG MIMALLOC_SHA256=8bc9f820eaf3dad3509d7930d80c40512bc51e04989641f892ee64c46b7ab0d8
 
 SHELL ["/bin/sh", "-c"]
 ENV CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
@@ -222,12 +222,11 @@ RUN set -eux; \
 # such as the Cortex-A72. The build fails unless our -march is recorded in the
 # object and no other -march is.
 #
-# MI_STATS is on by default in a Release build of 3.5.x: it counts every
-# allocation and free (it only feeds MIMALLOC_SHOW_STATS, which nothing here
-# reads), so it is off, and the build fails unless mimalloc's own configure
-# output says so. MI_PROFILE stays at its default (1): at that level sampling
-# happens only on the slow path that refills a page, never per allocation, and
-# 3.5.4 does not compile with it off (src/profile/pprof.c).
+# MI_STATS and MI_PROFILE are both on by default in a Release build: the first
+# counts every allocation and free (it only feeds MIMALLOC_SHOW_STATS), the
+# second samples allocations for mimalloc's profiler. Nothing here reads either,
+# so both are off, and the build fails unless mimalloc's own configure output
+# says so.
 RUN set -eux; \
     if [ "${ALLOCATOR}" = "mimalloc" ]; then \
         if [ "${TARGETARCH}" = "arm64" ]; then \
@@ -256,8 +255,10 @@ RUN set -eux; \
             -DMI_LIBC_MUSL=ON \
             -DMI_NO_OPT_ARCH=ON \
             -DMI_STATS=OFF \
+            -DMI_PROFILE=OFF \
             -DCMAKE_C_FLAGS="${flags}" | tee /build/mimalloc/configure.log; \
         grep -qF 'Disable detailed statistics' /build/mimalloc/configure.log; \
+        grep -qF 'Disable profiling' /build/mimalloc/configure.log; \
         cmake --build /build/mimalloc/build; \
         test -s /build/mimalloc/build/mimalloc.o; \
         readelf -p .GCC.command.line /build/mimalloc/build/mimalloc.o > /build/mimalloc/cmdline.txt; \
@@ -394,6 +395,7 @@ RUN set -eux; \
             echo "mimalloc_tag=${MIMALLOC_TAG}"; \
             echo "mimalloc_sha256=${MIMALLOC_SHA256}"; \
             echo "mimalloc_stats=off"; \
+            echo "mimalloc_profile=off"; \
         fi; \
     } > /build/BUILD-INFO; \
     cat /build/BUILD-INFO

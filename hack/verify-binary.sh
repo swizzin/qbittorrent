@@ -276,10 +276,12 @@ if [[ ${allocator} == "mimalloc" ]]; then
         grep -qx "mimalloc_tag=${MIMALLOC_TAG}" "${tmpdir}/BUILD-INFO"
     expect "BUILD-INFO records the mimalloc tarball sha256" \
         grep -qx "mimalloc_sha256=${MIMALLOC_SHA256}" "${tmpdir}/BUILD-INFO"
-    # Statistics are compiled out (the Dockerfile checks mimalloc's configure
-    # output; BUILD-INFO records that it did).
+    # Statistics and sampled profiling are compiled out (the Dockerfile checks
+    # mimalloc's configure output; BUILD-INFO records that it did).
     expect "BUILD-INFO records mimalloc statistics off" \
         grep -qx "mimalloc_stats=off" "${tmpdir}/BUILD-INFO"
+    expect "BUILD-INFO records mimalloc profiling off" \
+        grep -qx "mimalloc_profile=off" "${tmpdir}/BUILD-INFO"
 fi
 
 # --------------------------------------------------------------------------
