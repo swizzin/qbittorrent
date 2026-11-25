@@ -5,7 +5,7 @@ name: image
 #
 # This file is a reusable workflow and only that. It is called from build.yml by
 # the two jobs that own the matrices — image-hosted (the eight legs on
-# GitHub-hosted runners, all at once) and image-znver3 (the three legs on the
+# GitHub-hosted runners, all at once) and image-znver3 (the two legs on the
 # self-hosted runner, one at a time) — so it has no triggers of its own: no
 # push, no schedule, and above all no pull_request, because a fork must never
 # reach the self-hosted runner and build.yml's trigger set is the boundary that
@@ -54,7 +54,7 @@ on:
         required: true
         type: string
       allocator:
-        description: allocator (musl or mimalloc)
+        description: allocator (musl for base, mimalloc for 10g; it follows the profile)
         required: true
         type: string
       platform:
@@ -130,8 +130,8 @@ jobs:
         run: hack/versions.sh "${{ inputs.allocator }}" "${{ inputs.profile }}" "${{ inputs.march }}" "${{ inputs.arch }}" "${{ inputs.lt }}" >> "${GITHUB_ENV}"
 
       # One scheme for every tag (README, "Tags"). VARIANT is the variant's
-      # name, lt<line>[-10g][-znver3][-mimalloc], and every tag is that name
-      # with something in front of it or nothing:
+      # name, lt<line>[-10g][-znver3], and every tag is that name with
+      # something in front of it or nothing:
       #
       #   rolling    <VARIANT>                    latest build, any qBittorrent
       #   versioned  <qbt>-<VARIANT>              latest build of this qBittorrent

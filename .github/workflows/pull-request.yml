@@ -10,7 +10,7 @@ name: pull request
 # pull_request_target, so a run uses the pull request's own workflow files with
 # a read-only token.
 #
-# The image itself cannot be built here (that is the eleven legs split across
+# The image itself cannot be built here (that is the ten legs split across
 # build.yml's two image jobs, which needs the project's own runners for the
 # znver3 legs). So these checks need no image:
 # actionlint over the workflows, shellcheck over the shell scripts, hadolint
@@ -121,52 +121,50 @@ jobs:
 
           lt12_amd64=$(tag musl base x86-64-v2 amd64 1.2.20)
           lt12_arm64=$(tag musl base armv8-a arm64 1.2.20)
-          lt12_10g_amd64=$(tag musl 10g x86-64-v2 amd64 1.2.20)
-          lt12_10g_arm64=$(tag musl 10g armv8-a arm64 1.2.20)
-          lt12_10g_znver3=$(tag musl 10g znver3 amd64 1.2.20)
-          lt12_10g_mimalloc=$(tag mimalloc 10g znver3 amd64 1.2.20)
+          lt12_10g_amd64=$(tag mimalloc 10g x86-64-v2 amd64 1.2.20)
+          lt12_10g_arm64=$(tag mimalloc 10g armv8-a arm64 1.2.20)
+          lt12_10g_znver3=$(tag mimalloc 10g znver3 amd64 1.2.20)
 
           lt21_amd64=$(tag musl base x86-64-v2 amd64 2.1.2)
           lt21_arm64=$(tag musl base armv8-a arm64 2.1.2)
-          lt21_10g_amd64=$(tag musl 10g x86-64-v2 amd64 2.1.2)
-          lt21_10g_arm64=$(tag musl 10g armv8-a arm64 2.1.2)
-          lt21_10g_znver3=$(tag musl 10g znver3 amd64 2.1.2)
+          lt21_10g_amd64=$(tag mimalloc 10g x86-64-v2 amd64 2.1.2)
+          lt21_10g_arm64=$(tag mimalloc 10g armv8-a arm64 2.1.2)
+          lt21_10g_znver3=$(tag mimalloc 10g znver3 amd64 2.1.2)
 
           # A tag names the libtorrent line, never its patch release: 1.2.20
-          # is <qbt>-lt1.2, with the profile, microarchitecture and allocator
-          # suffixes in that order.
+          # is <qbt>-lt1.2, with the profile and microarchitecture suffixes in
+          # that order. The allocator is not in a tag: it follows the profile.
           [[ ${lt12_amd64} == "${qbt}-lt1.2" ]]
           [[ ${lt12_arm64} == "${lt12_amd64}" ]]
           [[ ${lt12_10g_amd64} == "${lt12_amd64}-10g" ]]
           [[ ${lt12_10g_arm64} == "${lt12_10g_amd64}" ]]
           [[ ${lt12_10g_znver3} == "${lt12_10g_amd64}-znver3" ]]
-          [[ ${lt12_10g_mimalloc} == "${lt12_10g_znver3}-mimalloc" ]]
 
-          # The 2.1 line adds its own default, 10g and 10g-znver3 names, and no
-          # mimalloc variant: the allocator A/B is a 1.2 experiment.
+          # The 2.1 line adds its own default, 10g and 10g-znver3 names: the
+          # same shape, on the other line, with 10g linking mimalloc there too.
           [[ ${lt21_amd64} == "${qbt}-lt2.1" ]]
           [[ ${lt21_arm64} == "${lt21_amd64}" ]]
           [[ ${lt21_10g_amd64} == "${lt21_amd64}-10g" ]]
           [[ ${lt21_10g_arm64} == "${lt21_10g_amd64}" ]]
           [[ ${lt21_10g_znver3} == "${lt21_10g_amd64}-znver3" ]]
 
-          # Eleven matrix legs, seven moving tags, and no tag assembled by
-          # accident: each line's default and 10g are one multi-arch tag shared by
-          # their two arch legs, and the three znver3 legs are single images with
-          # a tag each. The architecture is never part of a moving tag.
+          # Ten matrix legs, six moving tags, and no tag assembled by
+          # accident: each line's default and 10g are one multi-arch tag shared
+          # by their two arch legs, and its znver3 leg is a single image with a
+          # tag of its own. The architecture is never part of a moving tag.
           distinct=$(printf '%s\n' \
             "${lt12_amd64}" "${lt12_arm64}" "${lt12_10g_amd64}" \
-            "${lt12_10g_arm64}" "${lt12_10g_znver3}" "${lt12_10g_mimalloc}" \
+            "${lt12_10g_arm64}" "${lt12_10g_znver3}" \
             "${lt21_amd64}" "${lt21_arm64}" "${lt21_10g_amd64}" \
             "${lt21_10g_arm64}" "${lt21_10g_znver3}" | sort -u | wc -l)
-          [[ ${distinct} -eq 7 ]]
+          [[ ${distinct} -eq 6 ]]
 
           # Each versioned tag is its rolling tag with the qBittorrent version in
           # front, and no rolling tag starts with a digit: update tools read a
           # tag that does as a version, and a rolling tag is not one.
-          for axes in "musl base x86-64-v2 amd64 1.2.20" "musl 10g armv8-a arm64 1.2.20" \
+          for axes in "musl base x86-64-v2 amd64 1.2.20" "mimalloc 10g armv8-a arm64 1.2.20" \
             "mimalloc 10g znver3 amd64 1.2.20" "musl base armv8-a arm64 2.1.2" \
-            "musl 10g znver3 amd64 2.1.2"; do
+            "mimalloc 10g znver3 amd64 2.1.2"; do
             read -ra a <<< "${axes}"
             [[ $(tag "${a[@]}") == "${qbt}-$(variant "${a[@]}")" ]]
             [[ $(variant "${a[@]}") =~ ^lt[0-9]+\.[0-9]+(-[a-z0-9]+)*$ ]]
@@ -178,10 +176,10 @@ jobs:
           [[ $(latest musl base armv8-a arm64 "${LT_VERSION}") == true ]]
           [[ $(variant musl base x86-64-v2 amd64 "${LT_VERSION}") == "lt${default_line}" ]]
           carriers=0
-          for axes in "musl base x86-64-v2 amd64 1.2.20" "musl 10g x86-64-v2 amd64 1.2.20" \
-            "musl 10g znver3 amd64 1.2.20" "mimalloc 10g znver3 amd64 1.2.20" \
-            "musl base x86-64-v2 amd64 2.1.2" "musl 10g x86-64-v2 amd64 2.1.2" \
-            "musl 10g znver3 amd64 2.1.2"; do
+          for axes in "musl base x86-64-v2 amd64 1.2.20" "mimalloc 10g x86-64-v2 amd64 1.2.20" \
+            "mimalloc 10g znver3 amd64 1.2.20" \
+            "musl base x86-64-v2 amd64 2.1.2" "mimalloc 10g x86-64-v2 amd64 2.1.2" \
+            "mimalloc 10g znver3 amd64 2.1.2"; do
             read -ra a <<< "${axes}"
             if [[ $(latest "${a[@]}") == true ]]; then carriers=$((carriers + 1)); fi
           done
@@ -193,24 +191,23 @@ jobs:
           immutables=$(printf '%s\n' \
             "$(immutable musl base x86-64-v2 amd64 1.2.20)" \
             "$(immutable musl base armv8-a arm64 1.2.20)" \
-            "$(immutable musl 10g x86-64-v2 amd64 1.2.20)" \
-            "$(immutable musl 10g armv8-a arm64 1.2.20)" \
-            "$(immutable musl 10g znver3 amd64 1.2.20)" \
+            "$(immutable mimalloc 10g x86-64-v2 amd64 1.2.20)" \
+            "$(immutable mimalloc 10g armv8-a arm64 1.2.20)" \
             "$(immutable mimalloc 10g znver3 amd64 1.2.20)" \
             "$(immutable musl base x86-64-v2 amd64 2.1.2)" \
             "$(immutable musl base armv8-a arm64 2.1.2)" \
-            "$(immutable musl 10g x86-64-v2 amd64 2.1.2)" \
-            "$(immutable musl 10g armv8-a arm64 2.1.2)" \
-            "$(immutable musl 10g znver3 amd64 2.1.2)" | sort -u | wc -l)
-          [[ ${immutables} -eq 11 ]]
+            "$(immutable mimalloc 10g x86-64-v2 amd64 2.1.2)" \
+            "$(immutable mimalloc 10g armv8-a arm64 2.1.2)" \
+            "$(immutable mimalloc 10g znver3 amd64 2.1.2)" | sort -u | wc -l)
+          [[ ${immutables} -eq 10 ]]
 
-          # Those eleven legs are split across build.yml's two image jobs, and
+          # Those ten legs are split across build.yml's two image jobs, and
           # the split has to stay a split: the eight hosted legs must not select
           # the self-hosted runner (a leg that needs no CPU feature gains
-          # nothing there, and that runner is a privileged builder), and the
-          # three znver3 legs must all select it, being the only ones that
+          # nothing there, and that runner is a privileged builder), and both
+          # znver3 legs must select it, being the only ones that
           # cannot run anywhere else. The two lists together are still the
-          # eleven legs asserted above, each with its own name.
+          # ten legs asserted above, each with its own name.
           legs() {
             awk -v job="  $1:" '
               $0 == job { injob = 1; next }
@@ -223,20 +220,21 @@ jobs:
           hosted_legs=$(grep -c 'name:' <<< "${hosted}" || true)
           znver3_legs=$(grep -c 'name:' <<< "${znver3}" || true)
           [[ ${hosted_legs} -eq 8 ]]
-          [[ ${znver3_legs} -eq 3 ]]
+          [[ ${znver3_legs} -eq 2 ]]
           [[ $((hosted_legs + znver3_legs)) -eq ${immutables} ]]
           if grep -q 'self-hosted' <<< "${hosted}"; then
             printf 'a hosted leg selects the self-hosted runner\n' >&2
             exit 1
           fi
-          [[ $(grep -c 'runs_on: \[self-hosted, linux, x64, znver3\]' <<< "${znver3}" || true) -eq 3 ]]
+          [[ $(grep -c 'runs_on: \[self-hosted, linux, x64, znver3\]' <<< "${znver3}" || true) -eq 2 ]]
           [[ $(printf '%s\n%s\n' "${hosted}" "${znver3}" \
-            | grep -oE 'name: [a-z0-9.-]+' | sort -u | wc -l) -eq 11 ]]
+            | grep -oE 'name: [a-z0-9.-]+' | sort -u | wc -l) -eq 10 ]]
 
           # A bad axis is an error, not a silent fallback: versions.sh validates
           # the same combinations the Dockerfile does, so it cannot assemble a tag
           # that names something the build will refuse. That includes a libtorrent
-          # line with no patch pair, and mimalloc anywhere but 1.2.20.
+          # line with no patch pair, and an allocator that is not the one the
+          # profile carries.
           bad() {
             if hack/versions.sh "$@" >/dev/null 2>&1; then
               printf 'versions.sh accepted: %s\n' "$*" >&2
@@ -248,26 +246,26 @@ jobs:
           bad musl 10g znver4 amd64 1.2.20           # unknown march
           bad musl 10g znver3 arm64 1.2.20           # arm64 is compiled for armv8-a; MARCH is ignored there
           bad musl base armv8-a amd64 1.2.20         # armv8-a is not an amd64 target
-          bad mimalloc base x86-64-v2 amd64 1.2.20   # mimalloc is the 1.2.20 10g-znver3 amd64 line only
-          bad mimalloc 10g znver3 amd64 2.1.2        # ... and it is not built on 2.1.2 at all
+          bad musl 10g x86-64-v2 amd64 1.2.20        # 10g links mimalloc, not musl
+          bad musl 10g znver3 amd64 2.1.2            # ... on every line, so on 2.1.2 too
+          bad mimalloc base x86-64-v2 amd64 1.2.20   # and base keeps musl's own malloc
+          bad mimalloc base x86-64-v2 amd64 2.1.2    # ... on every line
           bad musl base x86-64-v2 amd64 2.0.9        # no patch pair for that libtorrent release
           bad musl base x86-64-v2 amd64 1.2          # a line is not a release: the tag needs its patch dir
 
-          # The suffixes are the four the 1.2.20 line defines (the default
-          # profile's is empty); the 2.1 line reuses three of them and adds
-          # none. Uniqueness across lines comes from the libtorrent line in the
-          # immutable tag, not from the suffix, so a repeated one is expected.
+          # The suffixes are the three the scheme defines (the default
+          # profile's is empty): 10g and znver3, and nothing for the allocator,
+          # which follows the profile. Both lines reuse all three.
           suffixes=$(printf '%s\n' \
             "$(suffix musl base x86-64-v2 amd64 1.2.20)" \
             "$(suffix musl base armv8-a arm64 1.2.20)" \
-            "$(suffix musl 10g x86-64-v2 amd64 1.2.20)" \
-            "$(suffix musl 10g armv8-a arm64 1.2.20)" \
-            "$(suffix musl 10g znver3 amd64 1.2.20)" \
+            "$(suffix mimalloc 10g x86-64-v2 amd64 1.2.20)" \
+            "$(suffix mimalloc 10g armv8-a arm64 1.2.20)" \
             "$(suffix mimalloc 10g znver3 amd64 1.2.20)" \
             "$(suffix musl base x86-64-v2 amd64 2.1.2)" \
-            "$(suffix musl 10g x86-64-v2 amd64 2.1.2)" \
-            "$(suffix musl 10g znver3 amd64 2.1.2)" | sort -u | wc -l)
-          [[ ${suffixes} -eq 4 ]]
+            "$(suffix mimalloc 10g x86-64-v2 amd64 2.1.2)" \
+            "$(suffix mimalloc 10g znver3 amd64 2.1.2)" | sort -u | wc -l)
+          [[ ${suffixes} -eq 3 ]]
 
           # The default profile is the image people pull without asking for
           # anything, so no tag, moving or immutable, names it.
@@ -283,11 +281,11 @@ jobs:
             exit 1
           fi
           [[ $(immutable musl base armv8-a arm64 1.2.20) == sha-0123456789ab-lt1.2-arm64 ]]
-          [[ $(immutable musl 10g x86-64-v2 amd64 2.1.2) == sha-0123456789ab-lt2.1-10g-amd64 ]]
+          [[ $(immutable mimalloc 10g x86-64-v2 amd64 2.1.2) == sha-0123456789ab-lt2.1-10g-amd64 ]]
 
           printf 'tag scheme ok (versioned, rolling; latest = lt%s):\n' "${default_line}"
           for t in "${lt12_amd64}" "${lt12_10g_amd64}" \
-            "${lt12_10g_znver3}" "${lt12_10g_mimalloc}" "${lt21_amd64}" \
+            "${lt12_10g_znver3}" "${lt21_amd64}" \
             "${lt21_10g_amd64}" "${lt21_10g_znver3}"; do
             printf '  %-36s %s\n' "${t}" "${t#"${qbt}-"}"
           done

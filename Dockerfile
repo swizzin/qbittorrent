@@ -6,8 +6,8 @@
 # The image is built in two compiled libtorrent profiles (base and 10g) across
 # two targets: amd64 (baseline x86-64-v2 or znver3) and arm64 (aarch64). Two
 # libtorrent lines are maintained side by side, 1.2.20 and 2.1.2, each with its
-# own compiled-defaults patch pair. The allocator is a further axis on the 1.2.20
-# line only: musl (the default) or, for its 10g-znver3 amd64 variant, mimalloc.
+# own compiled-defaults patch pair. The allocator follows the profile, on every
+# line and every target: base keeps musl's own malloc, 10g links mimalloc.
 #
 # The build is done by userdocs/qbittorrent-nox-static, pinned to a commit and
 # to the sha256 of the script itself. Patches are taken from this repository
@@ -23,8 +23,8 @@ ARG QBT_VERSION=5.3.1
 # The libtorrent line, as its exact tag version. Both lines are built and
 # maintained side by side:
 #
-#   1.2.20  the line the allocator A/B and the znver3 images started on
-#   2.1.2   the 2.1 line (musl only; no mimalloc)
+#   1.2.20  the line the 10g images and the znver3 target started on
+#   2.1.2   the 2.1 line
 #
 # Each has its own compiled-defaults patch pair under
 # patches/libtorrent/<version>/, which is also the directory the build script
@@ -32,17 +32,20 @@ ARG QBT_VERSION=5.3.1
 # travel together. A version with no pair there is a build error.
 ARG LT_VERSION=1.2.20
 
-# The allocator is the one axis of the A/B image pair, and it exists on the
-# 1.2.20 line only. musl (the default) keeps musl's own malloc; mimalloc links
-# mimalloc v3.5.4 as a statically linked drop-in replacement. Everything else
-# (versions, the libtorrent patch, the -march target, the runtime) is identical
-# across the two variants. mimalloc is only valid for the 1.2.20 10g-znver3
-# amd64 line. Any other value fails the build.
-ARG ALLOCATOR=musl
+# The memory allocator, as a build arg because the image records it in
+# BUILD-INFO and its OCI description and hack/verify-binary.sh reads it back.
+# It is not a free axis: it follows the profile. base keeps musl's own malloc;
+# 10g links mimalloc v3.5.4 as a statically linked drop-in replacement, on every
+# libtorrent line and every target, so a 10g tag names one allocator and no tag
+# has to say which. Any pairing other than base+musl or 10g+mimalloc fails the
+# build, and so does any other value. The default matches the default PROFILE
+# below.
+ARG ALLOCATOR=mimalloc
 
 # The compiled libtorrent profile. base and 10g differ only in the two
 # compile-only defaults that scale with the box (send_not_sent_low_watermark and
-# max_peer_recv_buffer_size); the other four tunings are shared. The runtime
+# max_peer_recv_buffer_size); the other four tunings are shared, and the
+# profile also selects the allocator (see ALLOCATOR above). The runtime
 # profiles (light/1g/10g) are qBittorrent.conf presets, not build axes, so they
 # are not image tags here. Any other value fails the build.
 ARG PROFILE=10g
@@ -106,10 +109,10 @@ ARG QBT_STATIC_SCRIPT_SHA256=0a865a0c09b2621feb05f0e16b9ac29263d7b3bdd0a1e3b8b8b
 ARG ICONV_VERSION=1.18
 ARG ICONV_SHA256=3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8
 
-# mimalloc, the allocator for the ALLOCATOR=mimalloc variant. v3.5.4 is the last
-# of the 3.5 line: v3.6.0 added an always-on profiler, which would contaminate a
-# fair allocator comparison. The release tarball is pinned by sha256 like the
-# other sources.
+# mimalloc, the allocator every 10g build links. v3.5.4 is the last of the 3.5
+# line: v3.6.0 added a profiler that is always on, and an allocator that is the
+# plain default of a profile should not carry one. The release tarball is pinned
+# by sha256 like the other sources.
 ARG MIMALLOC_TAG=v3.5.4
 ARG MIMALLOC_SHA256=36e9b5bf1bb703567a0347491721ce2098000db8284dc55cd53d211452723cdb
 
@@ -145,9 +148,10 @@ RUN case "${ALLOCATOR}" in \
         amd64|arm64) ;; \
         *) printf 'TARGETARCH must be "amd64" or "arm64", got: %s\n' "${TARGETARCH}" >&2; exit 1;; \
     esac; \
-    if [ "${ALLOCATOR}" = "mimalloc" ] && { [ "${LT_VERSION}" != "1.2.20" ] || [ "${PROFILE}" != "10g" ] || [ "${MARCH}" != "znver3" ] || [ "${TARGETARCH}" != "amd64" ]; }; then \
-        printf 'mimalloc is only built for the 1.2.20 10g-znver3 amd64 line\n' >&2; exit 1; \
-    fi
+    case "${PROFILE}:${ALLOCATOR}" in \
+        base:musl|10g:mimalloc) ;; \
+        *) printf 'the allocator follows the profile (base is musl, 10g is mimalloc), got PROFILE=%s ALLOCATOR=%s\n' "${PROFILE}" "${ALLOCATOR}" >&2; exit 1;; \
+    esac
 
 # Fetched, not copied: COPY cannot read a URL, and --checksum is what pins the
 # download to QBT_STATIC_SCRIPT_SHA256 above.
@@ -205,16 +209,28 @@ RUN set -eux; \
         > "/build/qbt-build/patches/qbittorrent/${QBT_VERSION}/url"; \
     test -s "/build/qbt-build/patches/qbittorrent/${QBT_VERSION}/url"
 
-# mimalloc (ALLOCATOR=mimalloc only): build the single object file that, linked
-# first on the final link line, replaces malloc/free/calloc/realloc/
+# mimalloc (the 10g allocator): build the single object file that, linked on
+# the final link line, replaces malloc/free/calloc/realloc/
 # aligned_alloc/posix_memalign/memalign/malloc_usable_size. MI_LIBC_MUSL selects
 # the musl TLS model; MI_OVERRIDE emits the strong override symbols;
-# MI_SECURE=OFF and a Release build keep mimalloc at its default (fair)
-# behaviour. It is compiled with the same -march/-mtune/-frecord-gcc-switches
-# flags as everything else, and the build fails unless that is actually
-# recorded in the object.
+# MI_SECURE=OFF and a Release build keep mimalloc at its default behaviour. It
+# is compiled with the same per-target flags as everything else below: arm64 is
+# the armv8-a baseline, an amd64 baseline (-march=x86-64-v2) tunes for generic,
+# and a znver3 build tunes for znver3. The build fails unless the -march is
+# actually recorded in the object.
 RUN set -eux; \
     if [ "${ALLOCATOR}" = "mimalloc" ]; then \
+        if [ "${TARGETARCH}" = "arm64" ]; then \
+            march=armv8-a; \
+            flags="-march=${march} -frecord-gcc-switches"; \
+        else \
+            march="${MARCH}"; \
+            case "${MARCH}" in \
+                x86-64*) mtune=generic ;; \
+                *) mtune="${MARCH}" ;; \
+            esac; \
+            flags="-march=${march} -mtune=${mtune} -frecord-gcc-switches"; \
+        fi; \
         mkdir -p /build/mimalloc/src /build/mimalloc/build; \
         tar -xzf /build/mimalloc.tar.gz -C /build/mimalloc/src --strip-components=1; \
         rm -f /build/mimalloc.tar.gz; \
@@ -228,10 +244,10 @@ RUN set -eux; \
             -DMI_SECURE=OFF \
             -DMI_DEBUG=OFF \
             -DMI_LIBC_MUSL=ON \
-            -DCMAKE_C_FLAGS="-march=${MARCH} -mtune=${MARCH} -frecord-gcc-switches"; \
+            -DCMAKE_C_FLAGS="${flags}"; \
         cmake --build /build/mimalloc/build; \
         test -s /build/mimalloc/build/mimalloc.o; \
-        readelf -p .GCC.command.line /build/mimalloc/build/mimalloc.o | grep -qF -- "-march=${MARCH}"; \
+        readelf -p .GCC.command.line /build/mimalloc/build/mimalloc.o | grep -qF -- "-march=${march}"; \
     fi
 
 # The script appends CFLAGS/CXXFLAGS/LDFLAGS from the environment to its own
@@ -239,11 +255,10 @@ RUN set -eux; \
 # openssl, boost, Qt, libtorrent, qBittorrent). amd64 carries -march/-mtune for
 # the chosen microarchitecture (GCC takes x86-64-v2 for -march only, so the
 # baseline tunes for generic); arm64 carries -march=armv8-a so the recorded
-# flags name the baseline AArch64 target. For the
-# mimalloc variant the LDFLAGS also carry mimalloc.o, which the script appends
-# at the end of the qbittorrent link line; the driver links libc.a after that,
-# so musl's own malloc objects are never pulled in and the override is clean
-# (no -z muldefs).
+# flags name the baseline AArch64 target. For 10g every build, on both targets,
+# the LDFLAGS also carry mimalloc.o, which the script appends at the end of the
+# qbittorrent link line; the driver links libc.a after that, so musl's own
+# malloc objects are never pulled in and the override is clean (no -z muldefs).
 #
 # -frecord-gcc-switches records the compiler flags in .GCC.command.line, which
 # survives -s/LTO and is what hack/verify-binary.sh reads back out of the
@@ -267,7 +282,11 @@ RUN set -eu; \
         esac; \
         flags="-march=${MARCH} -mtune=${mtune} -frecord-gcc-switches"; \
         ldflags="-march=${MARCH}"; \
-        if [ "${ALLOCATOR}" = "mimalloc" ]; then \
+    fi; \
+    if [ "${ALLOCATOR}" = "mimalloc" ]; then \
+        if [ -z "${ldflags}" ]; then \
+            ldflags="/build/mimalloc/build/mimalloc.o"; \
+        else \
             ldflags="${ldflags} /build/mimalloc/build/mimalloc.o"; \
         fi; \
     fi; \
@@ -370,7 +389,7 @@ ARG TARGETPLATFORM
 ARG QBT_VERSION
 ARG LT_VERSION
 ARG MARCH=znver3
-ARG ALLOCATOR=musl
+ARG ALLOCATOR=mimalloc
 
 LABEL org.opencontainers.image.source="https://github.com/swizzin/qbittorrent" \
       org.opencontainers.image.licenses="Apache-2.0 AND GPL-3.0-or-later" \

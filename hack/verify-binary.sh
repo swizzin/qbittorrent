@@ -63,11 +63,13 @@ docker cp "${container}:/app/qbittorrent-nox" "${tmpdir}/qbittorrent-nox" >/dev/
 docker cp "${container}:/app/BUILD-INFO" "${tmpdir}/BUILD-INFO" >/dev/null
 bin="${tmpdir}/qbittorrent-nox"
 
-# The image identifies its own build axes through BUILD-INFO. Older images
-# predate the profile/arch fields and are therefore the 10g amd64 variant; the
-# allocator field predates everything and defaults to musl when absent. The
-# libtorrent line is read from BUILD-INFO too: two lines are built, each with its
-# own patch pair, so the image itself says which one it was built on.
+# The image identifies its own build axes through BUILD-INFO. march and arch
+# default to the values an image from before those fields carried, and the
+# libtorrent line is read from BUILD-INFO too: two lines are built, each with
+# its own patch pair, so the image itself says which one it was built on. The
+# `allocator` field predates all of them and defaults to musl; an image that
+# predates the fields the pairing check below needs is a frozen pre-scheme
+# image, and the check refuses it rather than guessing which malloc it links.
 allocator=$(sed -n 's/^allocator=//p' "${tmpdir}/BUILD-INFO")
 allocator="${allocator:-musl}"
 profile=$(sed -n 's/^profile=//p' "${tmpdir}/BUILD-INFO")
@@ -86,13 +88,18 @@ case "${profile}" in
     base|10g) ;;
     *) printf 'verify-binary: unknown profile %q in BUILD-INFO\n' "${profile}" >&2; exit 2 ;;
 esac
-# mimalloc is built on the 1.2.20 line only, and the Dockerfile and
-# hack/versions.sh both refuse any other combination, so an image claiming it on
-# another libtorrent line is describing a build this repository cannot make.
-if [[ ${allocator} == "mimalloc" && ${lt} != "1.2.20" ]]; then
-    printf 'verify-binary: BUILD-INFO claims mimalloc on libtorrent %s, but mimalloc is the 1.2.20 line only\n' "${lt}" >&2
-    exit 2
-fi
+# The allocator follows the profile: base is musl, 10g is mimalloc, on every
+# libtorrent line and every architecture. The Dockerfile and hack/versions.sh
+# both refuse any other pairing, so an image claiming one is describing a build
+# this repository cannot make.
+case "${profile}:${allocator}" in
+    base:musl|10g:mimalloc) ;;
+    *)
+        printf 'verify-binary: BUILD-INFO pairs profile %s with allocator %s, but base links musl and 10g links mimalloc\n' \
+            "${profile}" "${allocator}" >&2
+        exit 2
+        ;;
+esac
 printf 'profile: %s  arch: %s  march: %s  allocator: %s  libtorrent: %s\n\n' \
     "${profile}" "${arch}" "${march}" "${allocator}" "${lt}"
 

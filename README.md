@@ -5,14 +5,13 @@ side by side: **qBittorrent 5.3.1** on **libtorrent 1.2.20** and on
 **libtorrent 2.1.2**, both statically linked against musl.
 
 Each line is built in two compiled libtorrent profiles — the **default** (safe on
-the smallest box; `PROFILE=base` to the build) and **`10g`** (tuned for a 10 Gbit seedbox) — across two targets:
-**amd64** (baseline `x86-64-v2` or `znver3`) and **arm64** (`aarch64`), each
-built natively on its own architecture. Each line also has its own compiled-defaults patch pair, because
-a 1.2 patch does not apply to 2.x. On the 1.2.20 line the allocator is a further
-axis: **`musl`** (musl's own malloc — the default) and, for its `10g-znver3`
-amd64 variant, **`mimalloc`** (mimalloc v3.5.4 statically linked as a drop-in
-replacement). The 2.1.2 line is musl only: the allocator A/B is a 1.2.20
-experiment.
+the smallest box; `PROFILE=base` to the build) and **`10g`** (tuned for a 10 Gbit
+seedbox) — across two targets: **amd64** (baseline `x86-64-v2` or `znver3`) and
+**arm64** (`aarch64`), each built natively on its own architecture. Each line
+also has its own compiled-defaults patch pair, because a 1.2 patch does not apply
+to 2.x. The allocator follows the profile, on both lines and both targets: the
+default profile keeps musl's own malloc, `10g` links **mimalloc** v3.5.4
+statically as a drop-in replacement.
 
 It is a drop-in replacement for a `qbittorrent-nox` container: same binary
 name, same `/config` layout, same environment variables, and it runs unprivileged
@@ -29,9 +28,11 @@ docker pull ghcr.io/swizzin/qbittorrent:latest
 
 Every tag is a **variant** name, with something in front of it or nothing. A
 variant is the libtorrent line and the build axes:
-`lt<line>[-10g][-znver3][-mimalloc]`, for example `lt1.2`, `lt1.2-10g` or
+`lt<line>[-10g][-znver3]`, for example `lt1.2`, `lt1.2-10g` or
 `lt2.1-10g-znver3`. The line is libtorrent's major.minor (`1.2`, `2.1`), never
-its patch release, and the default profile has no name in any tag.
+its patch release, and the default profile has no name in any tag. The allocator
+is not in a tag either: `10g` says mimalloc, and a tag with no profile says
+musl.
 
 | tag | example | what it is |
 |---|---|---|
@@ -47,11 +48,10 @@ The variants built today:
 |---|---|
 | `lt1.2` | libtorrent 1.2, default profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
 | `lt1.2-10g` | 1.2, `10g` profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
-| `lt1.2-10g-znver3` | 1.2, `10g` profile, `znver3` amd64, `musl`: single image |
-| `lt1.2-10g-znver3-mimalloc` | 1.2, `10g` profile, `znver3` amd64, `mimalloc`: single image |
+| `lt1.2-10g-znver3` | 1.2, `10g` profile, `znver3` amd64: single image |
 | `lt2.1` | libtorrent 2.1, default profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
 | `lt2.1-10g` | 2.1, `10g` profile, baseline CPU: multi-arch **manifest** (amd64 + arm64) |
-| `lt2.1-10g-znver3` | 2.1, `10g` profile, `znver3` amd64, `musl`: single image |
+| `lt2.1-10g-znver3` | 2.1, `10g` profile, `znver3` amd64: single image |
 
 A moving or rolling tag is re-pointed at every new build of its variant: a new
 qBittorrent moves the rolling tag to a new `<qbt>-` tag, and a libtorrent patch
@@ -71,6 +71,9 @@ the manifest's inputs, re-pointed on every push, and not intended for pinning.
 
 Tags from before this scheme (`5.3.0-lt1.2.20`, `5.3.0-lt2.1.2-10g`, ...) stay
 where they are, but they are no longer pushed: they will not see another build.
+The same goes for `lt1.2-10g-znver3-mimalloc`, the tag from when the allocator
+was a separate axis: 10g implies mimalloc, so `lt1.2-10g-znver3` is its
+successor.
 
 Pin by digest when the image itself has to stay the same:
 
@@ -80,7 +83,7 @@ docker pull ghcr.io/swizzin/qbittorrent@sha256:<digest>
 
 ## CPU requirement
 
-- `lt1.2-10g-znver3[-mimalloc]` and `lt2.1-10g-znver3`:
+- `lt1.2-10g-znver3` and `lt2.1-10g-znver3`:
   compiled with `-march=znver3 -mtune=znver3` — AMD Zen 3 (Ryzen 5000, EPYC
   7003) or newer (AVX2, BMI2, FMA, VAES, …). **On anything older the binary will
   die with SIGILL.**
@@ -105,15 +108,14 @@ them.
 |---|---|---|---|---|---|
 | 1.2.20 | base | baseline | amd64 | musl | `lt1.2` |
 | 1.2.20 | base | baseline | arm64 | musl | `lt1.2` |
-| 1.2.20 | 10g | baseline | amd64 | musl | `lt1.2-10g` |
-| 1.2.20 | 10g | baseline | arm64 | musl | `lt1.2-10g` |
-| 1.2.20 | 10g | znver3 | amd64 | musl | `lt1.2-10g-znver3` |
-| 1.2.20 | 10g | znver3 | amd64 | mimalloc | `lt1.2-10g-znver3-mimalloc` |
+| 1.2.20 | 10g | baseline | amd64 | mimalloc | `lt1.2-10g` |
+| 1.2.20 | 10g | baseline | arm64 | mimalloc | `lt1.2-10g` |
+| 1.2.20 | 10g | znver3 | amd64 | mimalloc | `lt1.2-10g-znver3` |
 | 2.1.2 | base | baseline | amd64 | musl | `lt2.1` |
 | 2.1.2 | base | baseline | arm64 | musl | `lt2.1` |
-| 2.1.2 | 10g | baseline | amd64 | musl | `lt2.1-10g` |
-| 2.1.2 | 10g | baseline | arm64 | musl | `lt2.1-10g` |
-| 2.1.2 | 10g | znver3 | amd64 | musl | `lt2.1-10g-znver3` |
+| 2.1.2 | 10g | baseline | amd64 | mimalloc | `lt2.1-10g` |
+| 2.1.2 | 10g | baseline | arm64 | mimalloc | `lt2.1-10g` |
+| 2.1.2 | 10g | znver3 | amd64 | mimalloc | `lt2.1-10g-znver3` |
 
 The default and `10g` profiles differ only in two compile-only libtorrent defaults
 (`send_not_sent_low_watermark` and `max_peer_recv_buffer_size`); four other
@@ -206,37 +208,39 @@ comment-only file in that module's patch directory, which makes the script take
 its local (empty) patch path instead. The build asserts that exactly one patch
 was applied and that the qBittorrent tree is still the pristine tag.
 
-## Allocator variants
+## Allocator
 
-`ARG ALLOCATOR` selects the memory allocator. It exists on the 1.2.20 line only,
-and for its `10g-znver3` amd64 variant it is the **only** difference between two
-images; the 2.1.2 line is musl only.
+`ARG ALLOCATOR` selects the memory allocator, and it is not an axis of its own:
+it follows the profile, on both libtorrent lines and both targets. `base` is
+`ALLOCATOR=musl` and `10g` is `ALLOCATOR=mimalloc`; the Dockerfile and
+`hack/versions.sh` refuse any other pairing, so a tag can never name an image
+the build will not produce.
 
-- `ALLOCATOR=musl` (default): musl's own malloc. This is the build the `musl`
-  tag has always carried.
-- `ALLOCATOR=mimalloc`: [mimalloc](https://github.com/microsoft/mimalloc)
-  **v3.5.4**, compiled to a single object file (`MI_BUILD_OBJECT`) with
-  `MI_OVERRIDE=ON` and `MI_LIBC_MUSL=ON`, and linked **first** on the final
-  link line through `LDFLAGS`. Because the linker only pulls musl's
-  `malloc.o`/`free.o`/… out of `libc.a` to satisfy an undefined symbol, and
-  mimalloc's object is linked before `libc.a`, mimalloc replaces
-  `malloc`/`free`/`calloc`/`realloc`/`aligned_alloc`/`posix_memalign`/
-  `memalign`/`malloc_usable_size` cleanly — no `-z muldefs`. `MI_SECURE=OFF`,
-  no debug, Release; no `MIMALLOC_*` environment variables are set at runtime,
-  so mimalloc runs at its default behaviour.
+- `ALLOCATOR=musl`: musl's own malloc. This is what every default-profile image
+  carries.
+- `ALLOCATOR=mimalloc` (the default, matching `PROFILE=10g`):
+  [mimalloc](https://github.com/microsoft/mimalloc) **v3.5.4**, compiled to a
+  single object file (`MI_BUILD_OBJECT`) with `MI_OVERRIDE=ON` and
+  `MI_LIBC_MUSL=ON`, and linked on the final link line through `LDFLAGS`.
+  Because the linker only pulls musl's `malloc.o`/`free.o`/… out of `libc.a` to
+  satisfy an undefined symbol, and mimalloc's object is linked before `libc.a`,
+  mimalloc replaces `malloc`/`free`/`calloc`/`realloc`/`aligned_alloc`/
+  `posix_memalign`/`memalign`/`malloc_usable_size` cleanly — no `-z muldefs`.
+  `MI_SECURE=OFF`, no debug, Release; no `MIMALLOC_*` environment variables are
+  set at runtime, so mimalloc runs at its default behaviour.
 
-  mimalloc is pinned to **v3.5.4** deliberately: v3.6.0 added an always-on
-  profiler, which would contaminate the comparison. The release tarball is
-  pinned by sha256 (`MIMALLOC_TAG` + `MIMALLOC_SHA256` in the Dockerfile), and
-  the object is compiled with the same `-march=znver3 -mtune=znver3
-  -frecord-gcc-switches` flags as everything else.
+  mimalloc is pinned to **v3.5.4** deliberately: v3.6.0 added a profiler that is
+  always on, and the allocator a 10g image links should be the plain allocator,
+  not one that also profiles every allocation. The release tarball is pinned by
+  sha256 (`MIMALLOC_TAG` + `MIMALLOC_SHA256` in the Dockerfile), and the object
+  is compiled with the same per-target flags as everything else:
+  `-march=znver3 -mtune=znver3` on a znver3 build, `-march=x86-64-v2
+  -mtune=generic` on an amd64 baseline build, `-march=armv8-a` on arm64.
 
-`mimalloc` is only valid for the 1.2.20 `10g-znver3` amd64 line; the Dockerfile
-fails any other combination, including 2.1.2 on mimalloc, and the
-baseline/arm64/2.1.2 images are `musl` only. Any other `ALLOCATOR` value fails
-the build. A third allocator (e.g. jemalloc) would be added the same way: a pin
-for its source, a build step that produces a linkable object, a `-suffix` for
-its tag in `hack/versions.sh`, and an allocator branch in `hack/verify-binary.sh`.
+A third allocator (e.g. jemalloc) would be added the same way: a pin for its
+source, a build step that produces a linkable object, the rule in
+`hack/versions.sh` and the Dockerfile that says which profile carries it, and an
+allocator branch in `hack/verify-binary.sh`.
 
 `/app/BUILD-INFO` records `allocator=musl|mimalloc`, plus `mimalloc_tag` and
 `mimalloc_sha256` for the mimalloc variant.
@@ -275,34 +279,37 @@ only with qemu binfmt registered, and then the whole compile runs emulated
 ```sh
 # base profile, baseline amd64, libtorrent 1.2.20 (the Dockerfile default line)
 docker buildx build --load --platform linux/amd64 \
-  --build-arg PROFILE=base --build-arg MARCH=x86-64-v2 \
+  --build-arg PROFILE=base --build-arg ALLOCATOR=musl --build-arg MARCH=x86-64-v2 \
   -t qbittorrent:5.3.1-lt1.2 .
 
 # 10g profile, baseline amd64
 docker buildx build --load --platform linux/amd64 \
-  --build-arg PROFILE=10g --build-arg MARCH=x86-64-v2 \
+  --build-arg PROFILE=10g --build-arg ALLOCATOR=mimalloc --build-arg MARCH=x86-64-v2 \
   -t qbittorrent:5.3.1-lt1.2-10g .
 
-# 10g profile, znver3 amd64 (the existing line), and its mimalloc A/B partner
+# 10g profile, znver3 amd64
 docker buildx build --load --platform linux/amd64 \
+  --build-arg PROFILE=10g --build-arg ALLOCATOR=mimalloc \
   -t qbittorrent:5.3.1-lt1.2-10g-znver3 .
-docker buildx build --load --platform linux/amd64 \
-  --build-arg ALLOCATOR=mimalloc \
-  -t qbittorrent:5.3.1-lt1.2-10g-znver3-mimalloc .
 
 # the same on libtorrent 2.1.2: the line is LT_VERSION, everything else matches
 docker buildx build --load --platform linux/amd64 \
-  --build-arg LT_VERSION=2.1.2 --build-arg PROFILE=base --build-arg MARCH=x86-64-v2 \
+  --build-arg LT_VERSION=2.1.2 --build-arg PROFILE=base --build-arg ALLOCATOR=musl \
+  --build-arg MARCH=x86-64-v2 \
   -t qbittorrent:5.3.1-lt2.1 .
 docker buildx build --load --platform linux/amd64 \
-  --build-arg LT_VERSION=2.1.2 \
+  --build-arg LT_VERSION=2.1.2 --build-arg PROFILE=10g --build-arg ALLOCATOR=mimalloc \
   -t qbittorrent:5.3.1-lt2.1-10g-znver3 .
 
 # arm64 (on an arm64 host)
 docker buildx build --load --platform linux/arm64 \
-  --build-arg PROFILE=base \
+  --build-arg PROFILE=base --build-arg ALLOCATOR=musl \
   -t qbittorrent:5.3.1-lt1.2-arm64 .
 ```
+
+`ALLOCATOR` always matches `PROFILE` — `base` with `musl`, `10g` with
+`mimalloc` — and the build refuses any other pairing rather than quietly
+falling back.
 
 The build is done by [userdocs/qbittorrent-nox-static](https://github.com/userdocs/qbittorrent-nox-static)
 pinned to commit `66a0aa3fd2044dcd2a327670aba35779b0957e34`, and the script
@@ -342,9 +349,11 @@ BMI2 and AVX instructions must be present in a `znver3` build and absent from an
 environment and labels. Both scripts read the libtorrent line from
 `/app/BUILD-INFO`, so the version string they expect and the patch they compare
 against `libtorrent_patch_sha256` are the line the image was actually built on,
-not the Dockerfile's default: the `musl` variant must be free of mimalloc, and a
-`mimalloc` image on any line but 1.2.20 is refused outright. The `mimalloc`
-variant must contain mimalloc **and** prove it is live at runtime — the script
+not the Dockerfile's default. `BUILD-INFO` also says which allocator the image
+claims, and the pairing has to be one this repository builds — `base` with
+`musl`, `10g` with `mimalloc` — so an image claiming anything else is refused
+rather than inspected. A `musl` image must be free of mimalloc, and every
+`mimalloc` image must prove it is live at runtime: the script
 runs the binary with `MIMALLOC_VERBOSE=1` and `MIMALLOC_SHOW_STATS=1` (only
 during the check) and requires mimalloc's own output, rather than trusting
 static presence.
@@ -391,11 +400,11 @@ naming the same bytes.
 
 `.github/workflows/build.yml` builds and verifies on every push to `main` and on
 `workflow_dispatch`, and pushes to `ghcr.io/swizzin/qbittorrent` only from
-`main`. It runs eleven variants: six on libtorrent 1.2.20 and five on 2.1.2,
+`main`. It runs ten variants: five on libtorrent 1.2.20 and five on 2.1.2,
 each leg handed to `.github/workflows/image.yml`, the reusable workflow that
 builds, verifies, smoke tests and — on `main` — pushes and signs one variant.
 The eight legs that run on GitHub-hosted runners do so in parallel, so a push
-waits for the longest build rather than the sum of all eleven; the three znver3
+waits for the longest build rather than the sum of all ten; the two znver3
 legs share the one self-hosted runner and run one at a time (`max-parallel: 1`).
 A final job waits for both and assembles the default and `10g` multi-arch
 manifests of both lines from the per-arch images. Images are only pushed after
@@ -407,10 +416,11 @@ Where a variant runs follows from its CPU target:
 |---|---|---|
 | `lt<lt>-amd64`, `lt<lt>-10g-amd64` (`x86-64-v2`) | `ubuntu-24.04` | the baseline ISA: builds and runs on any x86-64 host |
 | `lt<lt>-arm64`, `lt<lt>-10g-arm64` (`armv8-a`) | `ubuntu-24.04-arm` | native arm64: the runtime image and the smoke test are arm64 code, so nothing is emulated |
-| `lt1.2.20-10g-znver3-musl`, `lt1.2.20-10g-znver3-mimalloc`, `lt2.1.2-10g-znver3-musl` | self-hosted, labelled `znver3` | a `znver3` binary dies with SIGILL on any other CPU, so its smoke test needs the target |
+| `lt1.2.20-10g-znver3`, `lt2.1.2-10g-znver3` | self-hosted, labelled `znver3` | a `znver3` binary dies with SIGILL on any other CPU, so its smoke test needs the target |
 
-The `lt2.1.2` legs are the two baselines plus 10g-znver3; there is no 2.1
-mimalloc leg, because the allocator A/B is a 1.2.20 experiment.
+Both lines have the same five legs: the two default-profile baselines, the 10g
+baseline on amd64 and arm64, and 10g-znver3. The allocator follows the profile
+on all of them, so every hosted 10g leg and both znver3 legs build mimalloc.
 
 No job registers qemu binfmt: the handlers are kernel-global, so on a shared
 build host that changes the host, not the container. None is needed: every leg

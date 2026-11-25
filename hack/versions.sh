@@ -11,6 +11,8 @@
 # default. Every axis is validated the way the Dockerfile validates it, so an
 # impossible combination fails here instead of assembling a tag that names
 # something the build then refuses (or worse, something it does not build).
+# That includes the allocator, which is not a free axis: the Dockerfile builds
+# base+musl and 10g+mimalloc and nothing else, so no other pairing is accepted.
 #
 # LT is the libtorrent release, given as its exact version (1.2.20 or 2.1.2).
 # It defaults to the Dockerfile's LT_VERSION pin, and it is only accepted when
@@ -24,10 +26,14 @@
 # the image's labels. The names derived from the axes:
 #
 #   LT_LINE      1.2 | 2.1
-#   SUFFIX       "" | -10g | -10g-znver3 | -10g-znver3-mimalloc
+#   SUFFIX       "" | -10g | -10g-znver3
 #   VARIANT      lt<line><SUFFIX>          the rolling tag, any qBittorrent
 #   IMAGE_TAG    <qbt>-<VARIANT>           the versioned tag
 #   LATEST       true for the one variant `latest` also names
+#
+# The allocator is not in a tag: it follows the profile, so `10g` says mimalloc
+# and a tag with no profile says musl. It is still printed, because the build
+# takes it as a build arg and BUILD-INFO records it.
 #
 # Every published tag is VARIANT with something in front of it or nothing:
 # the rolling tag is VARIANT itself, the versioned tag puts the qBittorrent
@@ -50,7 +56,7 @@ arg() {
     printf '%s' "${value}"
 }
 
-allocator="${1:-musl}"
+allocator="${1:-$(arg ALLOCATOR)}"
 profile="${2:-$(arg PROFILE)}"
 march="${3:-$(arg MARCH)}"
 arch="${4:-amd64}"
@@ -104,18 +110,21 @@ if [[ ! -f ${repo_root}/patches/libtorrent/${lt}/patch \
     exit 1
 fi
 
-# mimalloc is only built for the 1.2.20 10g-znver3 amd64 line; the Dockerfile
-# fails any other combination, so refuse to name a tag for one.
-if [[ ${allocator} == "mimalloc" ]] \
-    && { [[ ${lt} != "1.2.20" ]] || [[ ${profile} != "10g" ]] || [[ ${march} != "znver3" ]] || [[ ${arch} != "amd64" ]]; }; then
-    printf 'versions: mimalloc is only built for the 1.2.20 10g-znver3 amd64 line\n' >&2
-    exit 1
-fi
+# The allocator follows the profile, on every line and every architecture: base
+# keeps musl's own malloc, 10g links mimalloc. The Dockerfile fails any other
+# pairing, so refuse to name a tag for one.
+case "${profile}:${allocator}" in
+    base:musl|10g:mimalloc) ;;
+    *)
+        printf 'versions: the allocator follows the profile (base is musl, 10g is mimalloc), got profile %q with allocator %q\n' \
+            "${profile}" "${allocator}" >&2
+        exit 1
+        ;;
+esac
 
 suffix=""
 [[ ${profile} == "10g" ]] && suffix="-10g"
 [[ ${march} == "znver3" ]] && suffix="${suffix}-znver3"
-[[ ${allocator} == "mimalloc" ]] && suffix="${suffix}-mimalloc"
 
 qbt=$(arg QBT_VERSION)
 line="${lt%.*}"

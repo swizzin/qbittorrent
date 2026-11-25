@@ -33,7 +33,7 @@ env:
   IMAGE: ghcr.io/swizzin/qbittorrent
 
 jobs:
-  # Eleven legs, split by where they can run, each leg handed to
+  # Ten legs, split by where they can run, each leg handed to
   # .github/workflows/image.yml.
   #
   # Where a variant runs is part of the matrix. The baseline builds (x86-64-v2
@@ -45,15 +45,17 @@ jobs:
   # The znver3 legs stay on the self-hosted runner, the only machine known to
   # be Zen 3. Those binaries use AVX2/BMI2, so running their smoke test on an
   # Intel or an older AMD host is a SIGILL, not a test. There is one such
-  # runner, so its three legs run one at a time (`max-parallel: 1`); that limit
+  # runner, so its two legs run one at a time (`max-parallel: 1`); that limit
   # is why the legs are split across two jobs instead of sharing one matrix,
   # where it would serialize the hosted legs as well and make a push take the
-  # sum of all eleven.
+  # sum of all ten.
   #
-  # Two libtorrent lines are built: 1.2.20 (six legs, including the allocator
-  # A/B) and 2.1.2 (five legs, musl only). Each line's baseline legs are one
-  # multi-arch manifest over amd64 and arm64; its 10g-znver3 leg is a single
-  # image. Which job a leg lands in changes none of that.
+  # Two libtorrent lines are built, five legs each: 1.2.20 and 2.1.2. The
+  # allocator follows the profile on both lines and both architectures, so the
+  # four hosted 10g legs and the two znver3 legs build mimalloc, and the four
+  # hosted default-profile legs keep musl's own malloc. Each line's baseline
+  # legs are one multi-arch manifest over amd64 and arm64; its 10g-znver3 leg is
+  # a single image. Which job a leg lands in changes none of that.
   image-hosted:
     name: build, verify, push (${{ matrix.name }})
     uses: ./.github/workflows/image.yml
@@ -69,21 +71,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # libtorrent 1.2.20 — the line the A/B pair and the znver3 images
-          # started on. These tags must not move or change shape.
-          # default profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
+          # libtorrent 1.2.20 — the line the 10g images and the znver3 target
+          # started on.
+          # default profile, baseline CPU (amd64 + arm64, one multi-arch
+          # manifest): musl, because the allocator follows the profile
           - { name: lt1.2.20-amd64,               lt: 1.2.20, profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
           - { name: lt1.2.20-arm64,               lt: 1.2.20, profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
-          # 10g profile, baseline CPU (amd64 + arm64, one multi-arch manifest)
-          - { name: lt1.2.20-10g-amd64,           lt: 1.2.20, profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
-          - { name: lt1.2.20-10g-arm64,           lt: 1.2.20, profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
-          # libtorrent 2.1.2 — the 2.1 line's default and 10g baselines. No mimalloc
-          # (the allocator A/B is a 1.2.20 experiment); its znver3 single image
-          # is in the job below with the other self-hosted legs.
+          # 10g profile, baseline CPU (amd64 + arm64, one multi-arch manifest):
+          # mimalloc on both architectures
+          - { name: lt1.2.20-10g-amd64,           lt: 1.2.20, profile: 10g,  arch: amd64, march: x86-64-v2, allocator: mimalloc, platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: lt1.2.20-10g-arm64,           lt: 1.2.20, profile: 10g,  arch: arm64, march: armv8-a,    allocator: mimalloc, platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
+          # libtorrent 2.1.2 — the 2.1 line, same shape as 1.2.20: musl on its
+          # default profile, mimalloc on 10g. Its znver3 single image is in the
+          # job below with the other self-hosted leg.
           - { name: lt2.1.2-amd64,                lt: 2.1.2,  profile: base, arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
           - { name: lt2.1.2-arm64,                lt: 2.1.2,  profile: base, arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
-          - { name: lt2.1.2-10g-amd64,            lt: 2.1.2,  profile: 10g,  arch: amd64, march: x86-64-v2, allocator: musl,     platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
-          - { name: lt2.1.2-10g-arm64,            lt: 2.1.2,  profile: 10g,  arch: arm64, march: armv8-a,    allocator: musl,     platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
+          - { name: lt2.1.2-10g-amd64,            lt: 2.1.2,  profile: 10g,  arch: amd64, march: x86-64-v2, allocator: mimalloc, platform: linux/amd64, multi: true,  runs_on: [ubuntu-24.04] }
+          - { name: lt2.1.2-10g-arm64,            lt: 2.1.2,  profile: 10g,  arch: arm64, march: armv8-a,    allocator: mimalloc, platform: linux/arm64, multi: true,  runs_on: [ubuntu-24.04-arm] }
     with:
       name: ${{ matrix.name }}
       lt: ${{ matrix.lt }}
@@ -108,17 +112,16 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
-      # One runner carries the znver3 label, so these three legs queue behind
+      # One runner carries the znver3 label, so these two legs queue behind
       # each other. Only these legs pay that price; the hosted ones above run
       # all at once.
       max-parallel: 1
       matrix:
         include:
-          # 10g profile, znver3 (amd64 only; the existing A/B line, unchanged)
-          - { name: lt1.2.20-10g-znver3-musl,     lt: 1.2.20, profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
-          - { name: lt1.2.20-10g-znver3-mimalloc, lt: 1.2.20, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
-          # the 2.1 line's znver3 single image
-          - { name: lt2.1.2-10g-znver3-musl,      lt: 2.1.2,  profile: 10g,  arch: amd64, march: znver3,     allocator: musl,     platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+          # 10g profile, znver3 (amd64 only), one leg per line. The allocator
+          # follows the profile here too: mimalloc.
+          - { name: lt1.2.20-10g-znver3,          lt: 1.2.20, profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
+          - { name: lt2.1.2-10g-znver3,           lt: 2.1.2,  profile: 10g,  arch: amd64, march: znver3,     allocator: mimalloc, platform: linux/amd64, multi: false, runs_on: [self-hosted, linux, x64, znver3] }
     with:
       name: ${{ matrix.name }}
       lt: ${{ matrix.lt }}
@@ -168,18 +171,19 @@ jobs:
           # comma-joined here: the versioned tag (whose -amd64/-arm64 images
           # the legs pushed, and which comes first), the rolling tag, and
           # `latest` for the one variant that carries it. Its immutable name is
-          # the variant with this commit in front.
+          # the variant with this commit in front. The allocator is an argument
+          # because it follows the profile: base is musl, 10g is mimalloc.
           add() {
-            eval "$(hack/versions.sh musl "$1" x86-64-v2 amd64 "$2")"
+            eval "$(hack/versions.sh "$1" "$2" x86-64-v2 amd64 "$3")"
             local names="${IMAGE_TAG},${VARIANT}"
             if [ "${LATEST}" = "true" ]; then names="${names},latest"; fi
             moving+=("${names}")
             immutable+=("sha-${SHA}-${VARIANT}")
           }
-          add base 1.2.20
-          add 10g 1.2.20
-          add base 2.1.2
-          add 10g 2.1.2
+          add musl base 1.2.20
+          add mimalloc 10g 1.2.20
+          add musl base 2.1.2
+          add mimalloc 10g 2.1.2
           {
             echo "MOVING_TAGS=${moving[*]}"
             echo "IMMUTABLE_TAGS=${immutable[*]}"
