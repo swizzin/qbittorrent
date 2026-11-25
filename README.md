@@ -1,7 +1,7 @@
 # qbittorrent
 
 A container image of qBittorrent, built from source, in two libtorrent lines
-side by side: **qBittorrent 5.3.0** on **libtorrent 1.2.20** and on
+side by side: **qBittorrent 5.3.1** on **libtorrent 1.2.20** and on
 **libtorrent 2.1.2**, both statically linked against musl.
 
 Each line is built in two compiled libtorrent profiles — the **default** (safe on
@@ -37,7 +37,7 @@ its patch release, and the default profile has no name in any tag.
 |---|---|---|
 | `latest` | `latest` | rolling: the default profile on the default libtorrent line (today `lt1.2`) |
 | `<variant>` | `lt1.2-10g` | rolling: the latest build of that variant, whatever qBittorrent it carries |
-| `<qbt>-<variant>` | `5.3.0-lt1.2-10g` | moving: the latest build of that variant on that qBittorrent release |
+| `<qbt>-<variant>` | `5.3.1-lt1.2-10g` | moving: the latest build of that variant on that qBittorrent release |
 | `sha-<12>-<variant>` | `sha-<12>-lt1.2-10g` | immutable: that variant as built from one commit (a multi-arch manifest) |
 | `sha-<12>-<variant>-<arch>` | `sha-<12>-lt2.1-amd64` | immutable: one architecture of it, a single image |
 
@@ -166,7 +166,7 @@ tooling at runtime; with `/config` and `/tmp` writable it runs with
 
 ## What is in the image
 
-- `qbittorrent-nox` 5.3.0, static, stripped, built on libtorrent 1.2.20 or
+- `qbittorrent-nox` 5.3.1, static, stripped, built on libtorrent 1.2.20 or
   2.1.2 (the image's tag and `BUILD-INFO` say which)
 - `unrar` 7.23 (from `ghcr.io/linuxserver/unrar`, Alpine build)
 - `7zz` 26.01 (Alpine `7zip` package, `7z` is a symlink)
@@ -199,7 +199,7 @@ name the build script reads (`-lt v<LT_VERSION>`). See
 does and why, the two values that differ between the profiles, and — for 2.1.2
 — why the 2.x disk settings are not in it.
 
-qBittorrent itself is built from the `release-5.3.0` tag **unpatched**. The
+qBittorrent itself is built from the `release-5.3.1` tag **unpatched**. The
 build script would otherwise fetch patches for the tag from
 userdocs/qbittorrent-nox-static at build time; the Dockerfile puts a
 comment-only file in that module's patch directory, which makes the script take
@@ -276,38 +276,38 @@ only with qemu binfmt registered, and then the whole compile runs emulated
 # base profile, baseline amd64, libtorrent 1.2.20 (the Dockerfile default line)
 docker buildx build --load --platform linux/amd64 \
   --build-arg PROFILE=base --build-arg MARCH=x86-64-v2 \
-  -t qbittorrent:5.3.0-lt1.2 .
+  -t qbittorrent:5.3.1-lt1.2 .
 
 # 10g profile, baseline amd64
 docker buildx build --load --platform linux/amd64 \
   --build-arg PROFILE=10g --build-arg MARCH=x86-64-v2 \
-  -t qbittorrent:5.3.0-lt1.2-10g .
+  -t qbittorrent:5.3.1-lt1.2-10g .
 
 # 10g profile, znver3 amd64 (the existing line), and its mimalloc A/B partner
 docker buildx build --load --platform linux/amd64 \
-  -t qbittorrent:5.3.0-lt1.2-10g-znver3 .
+  -t qbittorrent:5.3.1-lt1.2-10g-znver3 .
 docker buildx build --load --platform linux/amd64 \
   --build-arg ALLOCATOR=mimalloc \
-  -t qbittorrent:5.3.0-lt1.2-10g-znver3-mimalloc .
+  -t qbittorrent:5.3.1-lt1.2-10g-znver3-mimalloc .
 
 # the same on libtorrent 2.1.2: the line is LT_VERSION, everything else matches
 docker buildx build --load --platform linux/amd64 \
   --build-arg LT_VERSION=2.1.2 --build-arg PROFILE=base --build-arg MARCH=x86-64-v2 \
-  -t qbittorrent:5.3.0-lt2.1 .
+  -t qbittorrent:5.3.1-lt2.1 .
 docker buildx build --load --platform linux/amd64 \
   --build-arg LT_VERSION=2.1.2 \
-  -t qbittorrent:5.3.0-lt2.1-10g-znver3 .
+  -t qbittorrent:5.3.1-lt2.1-10g-znver3 .
 
 # arm64 (on an arm64 host)
 docker buildx build --load --platform linux/arm64 \
   --build-arg PROFILE=base \
-  -t qbittorrent:5.3.0-lt1.2-arm64 .
+  -t qbittorrent:5.3.1-lt1.2-arm64 .
 ```
 
 The build is done by [userdocs/qbittorrent-nox-static](https://github.com/userdocs/qbittorrent-nox-static)
 pinned to commit `66a0aa3fd2044dcd2a327670aba35779b0957e34`, and the script
 itself is pinned by sha256 in the `ADD --checksum` line. Everything else is
-pinned too: qBittorrent `release-5.3.0`, the libtorrent line (`-lt v<LT_VERSION>`,
+pinned too: qBittorrent `release-5.3.1`, the libtorrent line (`-lt v<LT_VERSION>`,
 `v1.2.20` by default), OpenSSL `openssl-3.5.9` (the 3.5 LTS line: Boost's asio
 TLS hostname verification does not compile against the opaque `ASN1_STRING` of
 OpenSSL 4.x, and the script would otherwise take 4.x), libiconv 1.18 by sha256
@@ -328,8 +328,8 @@ real gate.
 ## Verifying
 
 ```sh
-hack/verify-binary.sh qbittorrent:5.3.0-lt1.2
-hack/smoke.sh        qbittorrent:5.3.0-lt1.2
+hack/verify-binary.sh qbittorrent:5.3.1-lt1.2
+hack/smoke.sh        qbittorrent:5.3.1-lt1.2
 ```
 
 `verify-binary.sh` inspects the stripped binary: qBittorrent and libtorrent
@@ -443,7 +443,7 @@ qBittorrent, which a copyleft one could not.
 org.opencontainers.image.licenses="Apache-2.0 AND GPL-3.0-or-later"
 ```
 
-qBittorrent's `COPYING`, at the `release-5.3.0` tag this image is built from,
+qBittorrent's `COPYING`, at the `release-5.3.1` tag this image is built from,
 is explicit about the difference:
 
 > The qBittorrent source code is licensed under the GNU General Public License,
@@ -459,7 +459,7 @@ OpenSSL possible at all. libtorrent is BSD-3-Clause, and Qt, OpenSSL, Boost and
 zlib are under their own licences.
 
 **Corresponding source**: the upstream release tags — qBittorrent
-`release-5.3.0`, libtorrent `v1.2.20` or `v2.1.2` (the line the image was
+`release-5.3.1`, libtorrent `v1.2.20` or `v2.1.2` (the line the image was
 built on), OpenSSL `openssl-3.5.9` (`OPENSSL_TAG`) and the versions of the rest
 that the pinned build script selects — plus that line's directory under
 `patches/libtorrent/` from this repository. Every pin, and the sha256 of the

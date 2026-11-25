@@ -18,7 +18,7 @@
 # no cross toolchain and no prebuilt host tools.
 
 # The versions. Updating qBittorrent is a change to QBT_VERSION and nothing else.
-ARG QBT_VERSION=5.3.0
+ARG QBT_VERSION=5.3.1
 
 # The libtorrent line, as its exact tag version. Both lines are built and
 # maintained side by side:

@@ -8,8 +8,8 @@ the context lines differ).
 
 | directory | libtorrent line | application | profiles |
 |---|---|---|---|
-| `1.2.20/` | `v1.2.20` | qBittorrent 5.3.0 | `patch` = `10g`, `base.patch` = `base` |
-| `2.1.2/` | `v2.1.2` | qBittorrent 5.3.0 | `patch` = `10g`, `base.patch` = `base` |
+| `1.2.20/` | `v1.2.20` | qBittorrent 5.3.1 | `patch` = `10g`, `base.patch` = `base` |
+| `2.1.2/` | `v2.1.2` | qBittorrent 5.3.1 | `patch` = `10g`, `base.patch` = `base` |
 
 The directory name must match what `qbittorrent-nox-static.sh -lt v<version>`
 creates (`qbt-build/patches/libtorrent/<version>/`). The Dockerfile stages
