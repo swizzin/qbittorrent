@@ -159,13 +159,6 @@ if [[ ${allocator} == "mimalloc" ]]; then
     else
         bad "MIMALLOC_VERBOSE=1 proves mimalloc is the live allocator (got: $(head -c 300 <<<"${verbose_out}"))"
     fi
-
-    stats_out=$(docker run --rm -e MIMALLOC_SHOW_STATS=1 --entrypoint /app/qbittorrent-nox "${image}" --version 2>&1 || true)
-    if grep -qE 'arenas|subproc' <<<"${stats_out}"; then
-        ok "MIMALLOC_SHOW_STATS=1 prints mimalloc heap stats at exit"
-    else
-        bad "MIMALLOC_SHOW_STATS=1 prints mimalloc heap stats at exit"
-    fi
 else
     if grep -aq 'mimalloc' "${bin}"; then
         bad "musl variant is free of mimalloc artefacts"
@@ -283,6 +276,10 @@ if [[ ${allocator} == "mimalloc" ]]; then
         grep -qx "mimalloc_tag=${MIMALLOC_TAG}" "${tmpdir}/BUILD-INFO"
     expect "BUILD-INFO records the mimalloc tarball sha256" \
         grep -qx "mimalloc_sha256=${MIMALLOC_SHA256}" "${tmpdir}/BUILD-INFO"
+    # Statistics are compiled out (the Dockerfile checks mimalloc's configure
+    # output; BUILD-INFO records that it did).
+    expect "BUILD-INFO records mimalloc statistics off" \
+        grep -qx "mimalloc_stats=off" "${tmpdir}/BUILD-INFO"
 fi
 
 # --------------------------------------------------------------------------

@@ -226,12 +226,18 @@ the build will not produce.
   satisfy an undefined symbol, and mimalloc's object is linked before `libc.a`,
   mimalloc replaces `malloc`/`free`/`calloc`/`realloc`/`aligned_alloc`/
   `posix_memalign`/`memalign`/`malloc_usable_size` cleanly — no `-z muldefs`.
-  `MI_SECURE=OFF`, no debug, Release; no `MIMALLOC_*` environment variables are
-  set at runtime, so mimalloc runs at its default behaviour.
+  `MI_SECURE=OFF`, no debug, Release, and `MI_STATS=OFF`: a Release build of
+  3.5.x otherwise counts every allocation and free for its statistics, which
+  this image never reads. The build checks mimalloc's own configure output for
+  it, and `BUILD-INFO` records it (`mimalloc_stats=off`). Sampled profiling
+  stays at its default level, where it samples only on the slow path that
+  refills a page, never per allocation (3.5.4 does not compile with it off).
+  `MI_NO_OPT_ARCH=ON` keeps mimalloc from adding a CPU target of its own. No
+  `MIMALLOC_*` environment variables are set at runtime.
 
-  mimalloc is pinned to **v3.5.4** deliberately: v3.6.0 added a profiler that is
-  always on, and the allocator a 10g image links should be the plain allocator,
-  not one that also profiles every allocation. The release tarball is pinned by
+  mimalloc is pinned to **v3.5.4**, and moving it is a change of its own: its
+  build defaults are read again each time, because a plain Release build is not
+  the plain allocator (see the options above). The release tarball is pinned by
   sha256 (`MIMALLOC_TAG` + `MIMALLOC_SHA256` in the Dockerfile), and the object
   is compiled with the same per-target flags as everything else:
   `-march=znver3 -mtune=znver3` on a znver3 build, `-march=x86-64-v2

@@ -221,6 +221,13 @@ RUN set -eux; \
 # LSE atomics), which would make the baseline image fault on an ARMv8.0 core
 # such as the Cortex-A72. The build fails unless our -march is recorded in the
 # object and no other -march is.
+#
+# MI_STATS is on by default in a Release build of 3.5.x: it counts every
+# allocation and free (it only feeds MIMALLOC_SHOW_STATS, which nothing here
+# reads), so it is off, and the build fails unless mimalloc's own configure
+# output says so. MI_PROFILE stays at its default (1): at that level sampling
+# happens only on the slow path that refills a page, never per allocation, and
+# 3.5.4 does not compile with it off (src/profile/pprof.c).
 RUN set -eux; \
     if [ "${ALLOCATOR}" = "mimalloc" ]; then \
         if [ "${TARGETARCH}" = "arm64" ]; then \
@@ -248,7 +255,9 @@ RUN set -eux; \
             -DMI_DEBUG=OFF \
             -DMI_LIBC_MUSL=ON \
             -DMI_NO_OPT_ARCH=ON \
-            -DCMAKE_C_FLAGS="${flags}"; \
+            -DMI_STATS=OFF \
+            -DCMAKE_C_FLAGS="${flags}" | tee /build/mimalloc/configure.log; \
+        grep -qF 'Disable detailed statistics' /build/mimalloc/configure.log; \
         cmake --build /build/mimalloc/build; \
         test -s /build/mimalloc/build/mimalloc.o; \
         readelf -p .GCC.command.line /build/mimalloc/build/mimalloc.o > /build/mimalloc/cmdline.txt; \
@@ -384,6 +393,7 @@ RUN set -eux; \
         if [ "${ALLOCATOR}" = "mimalloc" ]; then \
             echo "mimalloc_tag=${MIMALLOC_TAG}"; \
             echo "mimalloc_sha256=${MIMALLOC_SHA256}"; \
+            echo "mimalloc_stats=off"; \
         fi; \
     } > /build/BUILD-INFO; \
     cat /build/BUILD-INFO
