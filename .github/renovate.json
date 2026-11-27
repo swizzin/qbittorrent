@@ -1,0 +1,102 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Every pin this repository carries. Two kinds of bump may merge themselves and the rest wait: the two base images the Dockerfile pulls -- Alpine, the base of both stages, and the unrar the runtime stage copies a binary out of -- are the exceptions, because a build.yml run on main proves them before any tag moves. Every leg there builds, runs hack/verify-binary.sh and hack/smoke.sh, and pushes only after both pass, so a base image that does not work leaves main red with the registry untouched. Everything rendered into an image (qBittorrent, libtorrent, OpenSSL, mimalloc, the build script, the GitHub Actions) is a pull request for the maintainer: a pull request here only runs the linters, the image checks need a build that only main does, and several of those pins need an edit Renovate cannot make (a libtorrent patch pair regenerated from the new tag, the sha256 of a source tarball). Merging is Renovate's, after the checks on the branch are green (platformAutomerge is off): GitHub's own auto-merge merges the moment a pull request is mergeable, and not every check on this repository is required. The base images are read by Renovate's own dockerfile manager, which resolves a FROM that names an ARG and reads the tag and the index digest at the ARG -- a regex manager over the same two ARGs produced an identical update for every digest bump, so it is not here. Everything else lives where no built-in manager looks (ARG values, a workflow matrix, a URL), which is what the custom managers below are for.",
+  "extends": ["config:recommended"],
+  "automerge": false,
+  "platformAutomerge": false,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "qBittorrent itself, from its release tags. QBT_VERSION is the ARG every other copy of the version is read from -- the image tag, the OCI label, BUILD-INFO and both check scripts -- so this is the one line a qBittorrent bump changes. extractVersion drops the release- prefix, so the ARG keeps the bare version; the three numeric parts the pattern demands are what keep a -beta or -rc tag out of a pull request. Not automerged: a qBittorrent release is a new image with new defaults and a new session, and nothing here can build one on a pull request.",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": ["ARG QBT_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"],
+      "depNameTemplate": "qbittorrent/qBittorrent",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^release-(?<version>.*)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "OpenSSL, shared by both libtorrent lines. The tag is pinned to the 3.5 LTS line and the package rule below allows only 3.5.x: 4.x does not compile here, because libtorrent 1.2's Boost asio reads ASN1_STRING fields that 4.0 made opaque, so a 4.x pull request would be a build failure with a long explanation attached. Not automerged: a tag bump is a build and a look at what it changed.",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": ["ARG OPENSSL_TAG=openssl-(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"],
+      "depNameTemplate": "openssl/openssl",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^openssl-(?<version>.*)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "mimalloc, the allocator every 10g build links. The tag and the tarball's sha256 are two ARGs because Renovate cannot compute the second: a bump lands as a pull request that changes MIMALLOC_TAG alone, the Dockerfile's ADD --checksum then refuses the new tarball, and the maintainer replaces MIMALLOC_SHA256 by hand from the release before the build runs. That is the intended shape of this pull request, not a broken one. Not automerged, for the same reason: the second half of the bump is a person's.",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": ["ARG MIMALLOC_TAG=(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"],
+      "depNameTemplate": "microsoft/mimalloc",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^v(?<version>.*)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "libtorrent, in every place the repository names a release: the Dockerfile's LT_VERSION default, each leg's lt: in build.yml's two matrices, and the manifest job's add lines. All three shapes are one dependency on purpose, so a bump is one pull request that moves the default and the matrix together and cannot leave build.yml naming a release the Dockerfile no longer defaults to. It is not automerged, and it is not a one-line change: patches/libtorrent/<version>/ has to exist for the new tag or hack/versions.sh refuses to name a tag at all, so the bump brings a run of hack/lt-patches.sh <version> and the new patch pair with it. The two package rules below keep each libtorrent line inside its own major.minor.",
+      "managerFilePatterns": ["/^Dockerfile$/", "/^\\.github/workflows/build\\.yml$/"],
+      "matchStrings": [
+        "ARG LT_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)",
+        "- \\{ name: lt[0-9]+\\.[0-9]+\\.[0-9]+-[a-z0-9-]+,\\s+lt: (?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+),",
+        "\\n\\s+add [a-z]+ (?:base|10g) (?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\n"
+      ],
+      "depNameTemplate": "arvidn/libtorrent",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^v(?<version>.*)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "The build script itself: userdocs/qbittorrent-nox-static, pinned by the commit in its raw URL and by the sha256 of the script beside it. A commit has no version to compare, so git-refs watches the master branch's commit and this digest-style update replaces the 40 characters in the URL; the sha256 is not something Renovate can compute either, so the pull request is a reminder and both values are replaced together by hand. Not automerged: this script picks Qt and every other dependency an image ships, and a bump is a build to read, not a hash to merge.",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": [
+        "ARG QBT_STATIC_SCRIPT_URL=https://raw\\.githubusercontent\\.com/userdocs/qbittorrent-nox-static/(?<currentDigest>[a-f0-9]{40})/qbittorrent-nox-static\\.sh"
+      ],
+      "currentValueTemplate": "master",
+      "depNameTemplate": "userdocs/qbittorrent-nox-static",
+      "packageNameTemplate": "https://github.com/userdocs/qbittorrent-nox-static",
+      "datasourceTemplate": "git-refs"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Alpine stays on the 3.24 release branch, so only the index digest moves: the runtime stage's package set (catatonit, tzdata, 7zip, bash) comes from that branch's index, and a new Alpine minor changes the libc and every package under the app. Moving it is a decision with a build and a smoke test behind it, not a tag to follow.",
+      "matchDepNames": ["docker.io/library/alpine"],
+      "allowedVersions": "/^3\\.24$/"
+    },
+    {
+      "description": "OpenSSL stays on the 3.5 LTS line: 4.x does not compile, because libtorrent 1.2's Boost asio reads ASN1_STRING fields that 4.0 made opaque, and 3.6 would be a new line to read on its own. The pin moves within 3.5 only, which is the point of pinning one LTS line for both libtorrent lines.",
+      "matchDepNames": ["openssl/openssl"],
+      "allowedVersions": "/^3\\.5\\.\\d+$/"
+    },
+    {
+      "description": "A base image may merge itself once the branch's checks are green, and those checks are only the linters: the proof comes from build.yml on main, which builds every leg, verifies and smoke tests it, and pushes only after both pass. So a broken Alpine or unrar digest leaves main red with no tag moved and the registry as it was, and nothing bad reaches a user -- which is why this one class of bump does not need a person.",
+      "matchDepNames": ["docker.io/library/alpine", "ghcr.io/linuxserver/unrar"],
+      "automerge": true
+    },
+    {
+      "description": "The 1.2 line stays on libtorrent 1.2.x. A bump never crosses into 2.x: the two lines have separate compiled-defaults patch pairs, and a 1.2 image built on 2.x would be a different product under the same lt1.2 tag. All of the line's names are in one pull request (groupName) so the Dockerfile default, the five matrix legs and the manifest job move together, and the 2.1 line's bump cannot ride along in that pull request.",
+      "matchDepNames": ["arvidn/libtorrent"],
+      "matchCurrentValue": "/^1\\.2\\./",
+      "allowedVersions": "/^1\\.2\\.\\d+$/",
+      "groupName": "libtorrent 1.2"
+    },
+    {
+      "description": "The 2.1 line stays on libtorrent 2.1.x, and for its own reason: a 2.x minor can change the disk layer that the 2.1 README's exclusions are written against, and this line's patch pair is regenerated from that tag's settings_pack.cpp. Same one-pull-request grouping as 1.2, so the default, the five legs and the manifest names are never half moved.",
+      "matchDepNames": ["arvidn/libtorrent"],
+      "matchCurrentValue": "/^2\\.1\\./",
+      "allowedVersions": "/^2\\.1\\.\\d+$/",
+      "groupName": "libtorrent 2.1"
+    },
+    {
+      "description": "The pinned GitHub Actions and the runner images the matrices name move as one pull request: they are the machinery that builds and pushes the image rather than anything shipped in it, so there is nothing per-action to weigh, and one branch is one CI run to read. Not automerged, because a new action runs with the registry token and the keyless signing identity, and a new runner image runs the whole build.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "automerge": false
+    }
+  ]
+}
