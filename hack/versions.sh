@@ -49,9 +49,11 @@
 # The minor tag is for the user a tracker has pinned to one qBittorrent minor:
 # it moves with every build of its variant that carries a release of that
 # minor, so the minor's patch releases and every libtorrent, OpenSSL, Boost or
-# Alpine rebuild reach them without moving them off it. It is derived here
-# beside the versioned tag, from the same QBT_VERSION, so it cannot name a
-# version the build does not carry.
+# Alpine rebuild reach them without moving them off it. Only while that minor is
+# the one this repository builds: once QBT_VERSION moves to the next minor, the
+# old minor's tag stays on its last build and takes no rebuild again. It is
+# derived here beside the versioned tag, from the same QBT_VERSION, so it cannot
+# name a version the build does not carry.
 
 set -euo pipefail
 
@@ -141,13 +143,15 @@ variant="lt${line}${suffix}"
 latest=false
 [[ -z ${suffix} && ${line} == "${default_lt%.*}" ]] && latest=true
 
-# The minor tag drops the qBittorrent patch release, so the version has to have
-# one: a two-part QBT_VERSION would give a tag that claims a minor as a version.
-if [[ ! ${qbt} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# The minor tag is the qBittorrent version's first two numbers, so the version has
+# to have more than two: a two-part QBT_VERSION would give a tag that claims a
+# minor as a version. qBittorrent has shipped four-part releases (4.4.3.1), so
+# the minor is cut at the second dot, never by dropping the last part.
+if [[ ! ${qbt} =~ ^([0-9]+\.[0-9]+)(\.[0-9]+)+$ ]]; then
     printf 'versions: QBT_VERSION %q is not a major.minor.patch release\n' "${qbt}" >&2
     exit 1
 fi
-minor_tag="${qbt%.*}-${variant}"
+minor_tag="${BASH_REMATCH[1]}-${variant}"
 
 printf 'QBT_VERSION=%q\n' "${qbt}"
 printf 'LT_VERSION=%q\n' "${lt}"

@@ -168,7 +168,7 @@ jobs:
           # the same QBT_VERSION and cannot name a version the build does not
           # carry; the six moving tags have six, and the two arch legs of one
           # variant share theirs exactly as they share the versioned tag.
-          qbt_minor="${qbt%.*}"
+          qbt_minor=$(cut -d. -f1-2 <<< "${qbt}")
           [[ $(minor musl base x86-64-v2 amd64 1.2.20) == "${qbt_minor}-lt1.2" ]]
           [[ $(minor musl base armv8-a arm64 1.2.20) == "${qbt_minor}-lt1.2" ]]
           [[ $(minor mimalloc 10g x86-64-v2 amd64 1.2.20) == "${qbt_minor}-lt1.2-10g" ]]

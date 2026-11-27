@@ -61,7 +61,11 @@ tag is the one that is not pinned to a qBittorrent release: it re-points on
 every build of its variant that carries a release of the same minor, so it
 follows that minor's patch releases and every rebuild under them. It is for a
 user whose trackers allow one qBittorrent minor and not the next; it is still a
-moving tag, so pin its digest if the image itself has to stay put. The exact
+moving tag, so pin its digest if the image itself has to stay put. This
+repository builds one qBittorrent release at a time, so a minor's tag takes
+rebuilds only while that minor is current: once the next minor ships, the old
+minor's tag stays on its last build, as a versioned tag does once its release
+is replaced. The exact
 versions an image was built from are in `/app/BUILD-INFO` and its
 `org.opencontainers.image.description` label. `latest` changes libtorrent line
 only with a new qBittorrent minor release, and only on purpose. An immutable
