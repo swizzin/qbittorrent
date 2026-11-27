@@ -218,7 +218,7 @@ the build will not produce.
 
 - `ALLOCATOR=musl`: musl's own malloc. This is what every default-profile image
   carries.
-- `ALLOCATOR=mimalloc` (the default, matching `PROFILE=10g`):
+- `ALLOCATOR=mimalloc`:
   [mimalloc](https://github.com/microsoft/mimalloc) **v3.7.1**, compiled to a
   single object file (`MI_BUILD_OBJECT`) with `MI_OVERRIDE=ON` and
   `MI_LIBC_MUSL=ON`, and linked on the final link line through `LDFLAGS`.
@@ -282,7 +282,11 @@ only with qemu binfmt registered, and then the whole compile runs emulated
 (hours).
 
 ```sh
-# base profile, baseline amd64, libtorrent 1.2.20 (the Dockerfile default line)
+# the defaults, and the safe build: base profile, baseline CPU, musl, the
+# Dockerfile's libtorrent line. Nothing has to be passed.
+docker buildx build --load --platform linux/amd64 -t qbittorrent:5.3.1-lt1.2 .
+
+# spelled out, with the same result
 docker buildx build --load --platform linux/amd64 \
   --build-arg PROFILE=base --build-arg ALLOCATOR=musl --build-arg MARCH=x86-64-v2 \
   -t qbittorrent:5.3.1-lt1.2 .
@@ -314,7 +318,11 @@ docker buildx build --load --platform linux/arm64 \
 
 `ALLOCATOR` always matches `PROFILE` — `base` with `musl`, `10g` with
 `mimalloc` — and the build refuses any other pairing rather than quietly
-falling back.
+falling back. The defaults are the safe build on purpose: `base`, `musl` and
+`x86-64-v2`, so a bare `docker build .` is an image that runs on any x86-64 CPU
+from ~2009 on, on the default libtorrent line. The `10g` profile and the
+`znver3` target are opt-ins, because each of them is wrong for a box that did
+not ask for it.
 
 The build is done by [userdocs/qbittorrent-nox-static](https://github.com/userdocs/qbittorrent-nox-static)
 pinned to commit `66a0aa3fd2044dcd2a327670aba35779b0957e34`, and the script

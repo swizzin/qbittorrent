@@ -38,9 +38,9 @@ ARG LT_VERSION=1.2.20
 # 10g links mimalloc v3.7.1 as a statically linked drop-in replacement, on every
 # libtorrent line and every target, so a 10g tag names one allocator and no tag
 # has to say which. Any pairing other than base+musl or 10g+mimalloc fails the
-# build, and so does any other value. The default matches the default PROFILE
-# below.
-ARG ALLOCATOR=mimalloc
+# build, and so does any other value. The default is the one the default
+# PROFILE below carries.
+ARG ALLOCATOR=musl
 
 # The compiled libtorrent profile. base and 10g differ only in the two
 # compile-only defaults that scale with the box (send_not_sent_low_watermark and
@@ -48,7 +48,12 @@ ARG ALLOCATOR=mimalloc
 # profile also selects the allocator (see ALLOCATOR above). The runtime
 # profiles (light/1g/10g) are qBittorrent.conf presets, not build axes, so they
 # are not image tags here. Any other value fails the build.
-ARG PROFILE=10g
+#
+# The default is base, and with it the other two defaults (musl, x86-64-v2), so
+# that a bare `docker build .` is the image that runs on the smallest box. 10g
+# is the opt-in: it is tuned for a 10 Gbit seedbox, which is the wrong default
+# to hand someone who did not ask for it.
+ARG PROFILE=base
 
 ARG ALPINE_IMAGE=docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 ARG UNRAR_IMAGE=ghcr.io/linuxserver/unrar@sha256:48c0ce2609bb3c35764956bbd9395e95b177421e3c74b3628c3676029f24f2e0
@@ -69,11 +74,13 @@ FROM --platform=${TARGETPLATFORM} ${ALPINE_IMAGE} AS build
 ARG TARGETPLATFORM
 ARG TARGETARCH
 
-# Microarchitecture target for amd64. This is the single knob for a baseline
-# build:
-#   docker buildx build --build-arg MARCH=x86-64-v2 ...
+# Microarchitecture target for amd64: x86-64-v2 (SSE4.2, POPCNT, …; any x86-64
+# CPU from ~2009 on) or znver3 (Zen 3 or newer). The default is the baseline:
+# a znver3 binary dies with SIGILL on anything older, which is not something a
+# bare `docker build .` may hand back. The opt-in is explicit:
+#   docker buildx build --build-arg MARCH=znver3 ...
 # It is ignored for arm64, which is always built for the armv8-a baseline.
-ARG MARCH=znver3
+ARG MARCH=x86-64-v2
 ARG BUILD_JOBS=16
 ARG QBT_VERSION
 ARG LT_VERSION
@@ -410,8 +417,10 @@ FROM --platform=${TARGETPLATFORM} ${ALPINE_IMAGE} AS runtime
 ARG TARGETPLATFORM
 ARG QBT_VERSION
 ARG LT_VERSION
-ARG MARCH=znver3
-ARG ALLOCATOR=mimalloc
+# The safe build's values, restated: these defaults are what the OCI description
+# says when no build arg is given, so they have to match the build stage's.
+ARG MARCH=x86-64-v2
+ARG ALLOCATOR=musl
 
 LABEL org.opencontainers.image.source="https://github.com/swizzin/qbittorrent" \
       org.opencontainers.image.licenses="Apache-2.0 AND GPL-3.0-or-later" \
