@@ -169,13 +169,14 @@ jobs:
           # The default and 10g variants of each libtorrent line are multi-arch
           # manifests. Each is assembled once under all of its moving names,
           # comma-joined here: the versioned tag (whose -amd64/-arm64 images
-          # the legs pushed, and which comes first), the rolling tag, and
-          # `latest` for the one variant that carries it. Its immutable name is
-          # the variant with this commit in front. The allocator is an argument
-          # because it follows the profile: base is musl, 10g is mimalloc.
+          # the legs pushed, and which comes first), the qBittorrent minor's
+          # tag, the rolling tag, and `latest` for the one variant that carries
+          # it. Its immutable name is the variant with this commit in front.
+          # The allocator is an argument because it follows the profile: base
+          # is musl, 10g is mimalloc.
           add() {
             eval "$(hack/versions.sh "$1" "$2" x86-64-v2 amd64 "$3")"
-            local names="${IMAGE_TAG},${VARIANT}"
+            local names="${IMAGE_TAG},${MINOR_TAG},${VARIANT}"
             if [ "${LATEST}" = "true" ]; then names="${names},latest"; fi
             moving+=("${names}")
             immutable+=("sha-${SHA}-${VARIANT}")
@@ -237,7 +238,8 @@ jobs:
           # The per-arch images were signed by the leg that pushed them; these
           # are the eight new digests (four moving, four immutable) this job
           # created. A moving manifest's names all share one digest, so its
-          # versioned name stands for the rest.
+          # versioned name stands for the rest, the minor and rolling names
+          # included.
           for tag in "${moving[@]%%,*}" "${immutable[@]}"; do
             digest=$(docker buildx imagetools inspect "${IMAGE}:${tag}" \
               --format '{{.Manifest.Digest}}')

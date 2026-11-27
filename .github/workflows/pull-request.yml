@@ -109,6 +109,7 @@ jobs:
 
           tag() { ( eval "$(hack/versions.sh "$@")"; printf '%s\n' "${IMAGE_TAG}" ); }
           variant() { ( eval "$(hack/versions.sh "$@")"; printf '%s\n' "${VARIANT}" ); }
+          minor() { ( eval "$(hack/versions.sh "$@")"; printf '%s\n' "${MINOR_TAG}" ); }
           latest() { ( eval "$(hack/versions.sh "$@")"; printf '%s\n' "${LATEST}" ); }
           suffix() { ( eval "$(hack/versions.sh "$@")"; printf '%s\n' "${SUFFIX}" ); }
           immutable() {
@@ -148,7 +149,7 @@ jobs:
           [[ ${lt21_10g_arm64} == "${lt21_10g_amd64}" ]]
           [[ ${lt21_10g_znver3} == "${lt21_10g_amd64}-znver3" ]]
 
-          # Ten matrix legs, six moving tags, and no tag assembled by
+          # Ten matrix legs, six versioned tags, and no tag assembled by
           # accident: each line's default and 10g are one multi-arch tag shared
           # by their two arch legs, and its znver3 leg is a single image with a
           # tag of its own. The architecture is never part of a moving tag.
@@ -158,6 +159,42 @@ jobs:
             "${lt21_amd64}" "${lt21_arm64}" "${lt21_10g_amd64}" \
             "${lt21_10g_arm64}" "${lt21_10g_znver3}" | sort -u | wc -l)
           [[ ${distinct} -eq 6 ]]
+
+          # Each variant also carries a tag on its qBittorrent minor,
+          # <qbt major.minor>-<VARIANT>: for a user a tracker has pinned to a
+          # minor, who still wants the minor's patch releases and every
+          # libtorrent, OpenSSL, Boost and Alpine rebuild under them. It is the
+          # versioned tag with the patch release dropped, so it is derived from
+          # the same QBT_VERSION and cannot name a version the build does not
+          # carry; the six moving tags have six, and the two arch legs of one
+          # variant share theirs exactly as they share the versioned tag.
+          qbt_minor="${qbt%.*}"
+          [[ $(minor musl base x86-64-v2 amd64 1.2.20) == "${qbt_minor}-lt1.2" ]]
+          [[ $(minor musl base armv8-a arm64 1.2.20) == "${qbt_minor}-lt1.2" ]]
+          [[ $(minor mimalloc 10g x86-64-v2 amd64 1.2.20) == "${qbt_minor}-lt1.2-10g" ]]
+          [[ $(minor mimalloc 10g znver3 amd64 1.2.20) == "${qbt_minor}-lt1.2-10g-znver3" ]]
+          [[ $(minor musl base x86-64-v2 amd64 2.1.3) == "${qbt_minor}-lt2.1" ]]
+          [[ $(minor mimalloc 10g znver3 amd64 2.1.3) == "${qbt_minor}-lt2.1-10g-znver3" ]]
+          for axes in "musl base x86-64-v2 amd64 1.2.20" "mimalloc 10g armv8-a arm64 1.2.20" \
+            "mimalloc 10g znver3 amd64 1.2.20" "musl base armv8-a arm64 2.1.3" \
+            "mimalloc 10g x86-64-v2 amd64 2.1.3" "mimalloc 10g znver3 amd64 2.1.3"; do
+            read -ra a <<< "${axes}"
+            # No architecture, no patch release, and it is not the versioned tag.
+            [[ $(minor "${a[@]}") =~ ^[0-9]+\.[0-9]+-lt[0-9]+\.[0-9]+(-[a-z0-9]+)*$ ]]
+            [[ $(minor "${a[@]}") != "$(tag "${a[@]}")" ]]
+          done
+          minors=$(printf '%s\n' \
+            "$(minor musl base x86-64-v2 amd64 1.2.20)" \
+            "$(minor musl base armv8-a arm64 1.2.20)" \
+            "$(minor mimalloc 10g x86-64-v2 amd64 1.2.20)" \
+            "$(minor mimalloc 10g armv8-a arm64 1.2.20)" \
+            "$(minor mimalloc 10g znver3 amd64 1.2.20)" \
+            "$(minor musl base x86-64-v2 amd64 2.1.3)" \
+            "$(minor musl base armv8-a arm64 2.1.3)" \
+            "$(minor mimalloc 10g x86-64-v2 amd64 2.1.3)" \
+            "$(minor mimalloc 10g armv8-a arm64 2.1.3)" \
+            "$(minor mimalloc 10g znver3 amd64 2.1.3)" | sort -u | wc -l)
+          [[ ${minors} -eq 6 ]]
 
           # Each versioned tag is its rolling tag with the qBittorrent version in
           # front, and no rolling tag starts with a digit: update tools read a

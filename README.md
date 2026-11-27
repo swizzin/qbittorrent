@@ -39,6 +39,7 @@ musl.
 | `latest` | `latest` | rolling: the default profile on the default libtorrent line (today `lt1.2`) |
 | `<variant>` | `lt1.2-10g` | rolling: the latest build of that variant, whatever qBittorrent it carries |
 | `<qbt>-<variant>` | `5.3.1-lt1.2-10g` | moving: the latest build of that variant on that qBittorrent release |
+| `<qbt minor>-<variant>` | `5.3-lt1.2-10g` | moving: the latest build of that variant on that qBittorrent minor |
 | `sha-<12>-<variant>` | `sha-<12>-lt1.2-10g` | immutable: that variant as built from one commit (a multi-arch manifest) |
 | `sha-<12>-<variant>-<arch>` | `sha-<12>-lt2.1-amd64` | immutable: one architecture of it, a single image |
 
@@ -55,8 +56,13 @@ The variants built today:
 
 A moving or rolling tag is re-pointed at every new build of its variant: a new
 qBittorrent moves the rolling tag to a new `<qbt>-` tag, and a libtorrent patch
-release, like an OpenSSL, Boost or Qt bump, re-points both. The exact versions
-an image was built from are in `/app/BUILD-INFO` and its
+release, like an OpenSSL, Boost, Qt or Alpine bump, re-points both. The minor
+tag is the one that is not pinned to a qBittorrent release: it re-points on
+every build of its variant that carries a release of the same minor, so it
+follows that minor's patch releases and every rebuild under them. It is for a
+user whose trackers allow one qBittorrent minor and not the next; it is still a
+moving tag, so pin its digest if the image itself has to stay put. The exact
+versions an image was built from are in `/app/BUILD-INFO` and its
 `org.opencontainers.image.description` label. `latest` changes libtorrent line
 only with a new qBittorrent minor release, and only on purpose. An immutable
 tag is never re-pushed: the jobs refuse to overwrite one, so `sha-…` always
@@ -68,6 +74,8 @@ image; a tag with no architecture is a multi-arch **manifest** (or, for a
 `znver3` variant, its one amd64 image). The per-arch images a manifest is
 assembled from are pushed as `<qbt>-<variant>-amd64` and `-arm64`: they are
 the manifest's inputs, re-pointed on every push, and not intended for pinning.
+No per-arch image carries the minor name: it stands for the manifest over both
+architectures, so the job that assembles a manifest is the one that points it.
 
 Tags from before this scheme (`5.3.0-lt1.2.20`, `5.3.0-lt2.1.2-10g`, ...) stay
 where they are, but they are no longer pushed: they will not see another build.

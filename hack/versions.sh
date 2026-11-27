@@ -29,6 +29,7 @@
 #   SUFFIX       "" | -10g | -10g-znver3
 #   VARIANT      lt<line><SUFFIX>          the rolling tag, any qBittorrent
 #   IMAGE_TAG    <qbt>-<VARIANT>           the versioned tag
+#   MINOR_TAG    <qbt minor>-<VARIANT>     the tag on the qBittorrent minor
 #   LATEST       true for the one variant `latest` also names
 #
 # The allocator is not in a tag: it follows the profile, so `10g` says mimalloc
@@ -37,12 +38,20 @@
 #
 # Every published tag is VARIANT with something in front of it or nothing:
 # the rolling tag is VARIANT itself, the versioned tag puts the qBittorrent
-# version in front, the immutable tag puts the commit in front
-# (sha-<12>-<VARIANT>), and a single image appends -<arch> (see the README's
-# tags table). The default profile has no name in any tag. `latest` is the
-# default profile on the Dockerfile's own LT_VERSION line. ARCH deliberately
-# never appears in VARIANT: the default and 10g baseline tags are multi-arch
-# manifests that combine amd64 and arm64 under one name.
+# version in front, the minor tag puts the qBittorrent major.minor in front,
+# the immutable tag puts the commit in front (sha-<12>-<VARIANT>), and a single
+# image appends -<arch> (see the README's tags table). The default profile has
+# no name in any tag. `latest` is the default profile on the Dockerfile's own
+# LT_VERSION line. ARCH deliberately never appears in VARIANT: the default and
+# 10g baseline tags are multi-arch manifests that combine amd64 and arm64 under
+# one name.
+#
+# The minor tag is for the user a tracker has pinned to one qBittorrent minor:
+# it moves with every build of its variant that carries a release of that
+# minor, so the minor's patch releases and every libtorrent, OpenSSL, Boost or
+# Alpine rebuild reach them without moving them off it. It is derived here
+# beside the versioned tag, from the same QBT_VERSION, so it cannot name a
+# version the build does not carry.
 
 set -euo pipefail
 
@@ -132,6 +141,14 @@ variant="lt${line}${suffix}"
 latest=false
 [[ -z ${suffix} && ${line} == "${default_lt%.*}" ]] && latest=true
 
+# The minor tag drops the qBittorrent patch release, so the version has to have
+# one: a two-part QBT_VERSION would give a tag that claims a minor as a version.
+if [[ ! ${qbt} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'versions: QBT_VERSION %q is not a major.minor.patch release\n' "${qbt}" >&2
+    exit 1
+fi
+minor_tag="${qbt%.*}-${variant}"
+
 printf 'QBT_VERSION=%q\n' "${qbt}"
 printf 'LT_VERSION=%q\n' "${lt}"
 printf 'LT_LINE=%q\n' "${line}"
@@ -146,4 +163,5 @@ printf 'MIMALLOC_TAG=%q\n' "$(arg MIMALLOC_TAG)"
 printf 'MIMALLOC_SHA256=%q\n' "$(arg MIMALLOC_SHA256)"
 printf 'VARIANT=%q\n' "${variant}"
 printf 'IMAGE_TAG=%q\n' "${qbt}-${variant}"
+printf 'MINOR_TAG=%q\n' "${minor_tag}"
 printf 'LATEST=%q\n' "${latest}"

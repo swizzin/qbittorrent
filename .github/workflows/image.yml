@@ -135,23 +135,27 @@ jobs:
       #
       #   rolling    <VARIANT>                    latest build, any qBittorrent
       #   versioned  <qbt>-<VARIANT>              latest build of this qBittorrent
+      #   minor      <qbt minor>-<VARIANT>        latest build of this qBittorrent
+      #                                           minor, patch releases included
       #   immutable  sha-<12>-<VARIANT>-<arch>    this commit, this leg
       #
       # A tag with no arch suffix is a multi-arch manifest, which the manifest
-      # job assembles (rolling, versioned and `latest` alike, from the same
-      # inputs); a multi-arch leg pushes only its versioned tag per arch, as
-      # <qbt>-<VARIANT>-<arch>, so the manifest job has something to assemble.
-      # A single-image leg pushes its rolling and versioned tags itself. The
-      # immutable tag carries the libtorrent line as well as the suffix,
-      # because both lines build a default and a `10g` image and would
-      # otherwise collide on every commit.
+      # job assembles (rolling, versioned, minor and `latest` alike, from the
+      # same inputs); a multi-arch leg pushes only its versioned tag per arch,
+      # as <qbt>-<VARIANT>-<arch>, so the manifest job has something to
+      # assemble. A per-arch image never carries the minor name: that name
+      # stands for the manifest over both architectures, so the manifest job
+      # points it at both. A single-image leg pushes its rolling, versioned and
+      # minor tags itself. The immutable tag carries the libtorrent line as well
+      # as the suffix, because both lines build a default and a `10g` image and
+      # would otherwise collide on every commit.
       - name: Compute the push tags
         run: |
           IMMUTABLE_TAG="sha-${GITHUB_SHA::12}-${VARIANT}-${ARCH}"
           if [ "${{ inputs.multi }}" = "true" ]; then
             PUSH_TAGS="${IMAGE_TAG}-${ARCH}"
           else
-            PUSH_TAGS="${IMAGE_TAG} ${VARIANT}"
+            PUSH_TAGS="${IMAGE_TAG} ${MINOR_TAG} ${VARIANT}"
             if [ "${LATEST}" = "true" ]; then
               PUSH_TAGS="${PUSH_TAGS} latest"
             fi
