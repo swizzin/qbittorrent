@@ -5,7 +5,7 @@
 #
 # The image is built in two compiled libtorrent profiles (base and 10g) across
 # two targets: amd64 (baseline x86-64-v2 or znver3) and arm64 (aarch64). Two
-# libtorrent lines are maintained side by side, 1.2.20 and 2.1.2, each with its
+# libtorrent lines are maintained side by side, 1.2.20 and 2.1.3, each with its
 # own compiled-defaults patch pair. The allocator follows the profile, on every
 # line and every target: base keeps musl's own malloc, 10g links mimalloc.
 #
@@ -24,7 +24,7 @@ ARG QBT_VERSION=5.3.1
 # maintained side by side:
 #
 #   1.2.20  the line the 10g images and the znver3 target started on
-#   2.1.2   the 2.1 line
+#   2.1.3   the 2.1 line
 #
 # Each has its own compiled-defaults patch pair under
 # patches/libtorrent/<version>/, which is also the directory the build script
@@ -148,8 +148,8 @@ RUN case "${ALLOCATOR}" in \
         *) printf 'PROFILE must be "base" or "10g", got: %s\n' "${PROFILE}" >&2; exit 1;; \
     esac; \
     case "${LT_VERSION}" in \
-        1.2.20|2.1.2) ;; \
-        *) printf 'LT_VERSION must be "1.2.20" or "2.1.2", got: %s\n' "${LT_VERSION}" >&2; exit 1;; \
+        1.2.20|2.1.3) ;; \
+        *) printf 'LT_VERSION must be "1.2.20" or "2.1.3", got: %s\n' "${LT_VERSION}" >&2; exit 1;; \
     esac; \
     case "${TARGETARCH}" in \
         amd64|arm64) ;; \

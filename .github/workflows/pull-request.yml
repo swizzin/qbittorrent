@@ -125,11 +125,11 @@ jobs:
           lt12_10g_arm64=$(tag mimalloc 10g armv8-a arm64 1.2.20)
           lt12_10g_znver3=$(tag mimalloc 10g znver3 amd64 1.2.20)
 
-          lt21_amd64=$(tag musl base x86-64-v2 amd64 2.1.2)
-          lt21_arm64=$(tag musl base armv8-a arm64 2.1.2)
-          lt21_10g_amd64=$(tag mimalloc 10g x86-64-v2 amd64 2.1.2)
-          lt21_10g_arm64=$(tag mimalloc 10g armv8-a arm64 2.1.2)
-          lt21_10g_znver3=$(tag mimalloc 10g znver3 amd64 2.1.2)
+          lt21_amd64=$(tag musl base x86-64-v2 amd64 2.1.3)
+          lt21_arm64=$(tag musl base armv8-a arm64 2.1.3)
+          lt21_10g_amd64=$(tag mimalloc 10g x86-64-v2 amd64 2.1.3)
+          lt21_10g_arm64=$(tag mimalloc 10g armv8-a arm64 2.1.3)
+          lt21_10g_znver3=$(tag mimalloc 10g znver3 amd64 2.1.3)
 
           # A tag names the libtorrent line, never its patch release: 1.2.20
           # is <qbt>-lt1.2, with the profile and microarchitecture suffixes in
@@ -163,8 +163,8 @@ jobs:
           # front, and no rolling tag starts with a digit: update tools read a
           # tag that does as a version, and a rolling tag is not one.
           for axes in "musl base x86-64-v2 amd64 1.2.20" "mimalloc 10g armv8-a arm64 1.2.20" \
-            "mimalloc 10g znver3 amd64 1.2.20" "musl base armv8-a arm64 2.1.2" \
-            "mimalloc 10g znver3 amd64 2.1.2"; do
+            "mimalloc 10g znver3 amd64 1.2.20" "musl base armv8-a arm64 2.1.3" \
+            "mimalloc 10g znver3 amd64 2.1.3"; do
             read -ra a <<< "${axes}"
             [[ $(tag "${a[@]}") == "${qbt}-$(variant "${a[@]}")" ]]
             [[ $(variant "${a[@]}") =~ ^lt[0-9]+\.[0-9]+(-[a-z0-9]+)*$ ]]
@@ -178,8 +178,8 @@ jobs:
           carriers=0
           for axes in "musl base x86-64-v2 amd64 1.2.20" "mimalloc 10g x86-64-v2 amd64 1.2.20" \
             "mimalloc 10g znver3 amd64 1.2.20" \
-            "musl base x86-64-v2 amd64 2.1.2" "mimalloc 10g x86-64-v2 amd64 2.1.2" \
-            "mimalloc 10g znver3 amd64 2.1.2"; do
+            "musl base x86-64-v2 amd64 2.1.3" "mimalloc 10g x86-64-v2 amd64 2.1.3" \
+            "mimalloc 10g znver3 amd64 2.1.3"; do
             read -ra a <<< "${axes}"
             if [[ $(latest "${a[@]}") == true ]]; then carriers=$((carriers + 1)); fi
           done
@@ -194,11 +194,11 @@ jobs:
             "$(immutable mimalloc 10g x86-64-v2 amd64 1.2.20)" \
             "$(immutable mimalloc 10g armv8-a arm64 1.2.20)" \
             "$(immutable mimalloc 10g znver3 amd64 1.2.20)" \
-            "$(immutable musl base x86-64-v2 amd64 2.1.2)" \
-            "$(immutable musl base armv8-a arm64 2.1.2)" \
-            "$(immutable mimalloc 10g x86-64-v2 amd64 2.1.2)" \
-            "$(immutable mimalloc 10g armv8-a arm64 2.1.2)" \
-            "$(immutable mimalloc 10g znver3 amd64 2.1.2)" | sort -u | wc -l)
+            "$(immutable musl base x86-64-v2 amd64 2.1.3)" \
+            "$(immutable musl base armv8-a arm64 2.1.3)" \
+            "$(immutable mimalloc 10g x86-64-v2 amd64 2.1.3)" \
+            "$(immutable mimalloc 10g armv8-a arm64 2.1.3)" \
+            "$(immutable mimalloc 10g znver3 amd64 2.1.3)" | sort -u | wc -l)
           [[ ${immutables} -eq 10 ]]
 
           # Those ten legs are split across build.yml's two image jobs, and
@@ -247,9 +247,9 @@ jobs:
           bad musl 10g znver3 arm64 1.2.20           # arm64 is compiled for armv8-a; MARCH is ignored there
           bad musl base armv8-a amd64 1.2.20         # armv8-a is not an amd64 target
           bad musl 10g x86-64-v2 amd64 1.2.20        # 10g links mimalloc, not musl
-          bad musl 10g znver3 amd64 2.1.2            # ... on every line, so on 2.1.2 too
+          bad musl 10g znver3 amd64 2.1.3            # ... on every line, so on 2.1.3 too
           bad mimalloc base x86-64-v2 amd64 1.2.20   # and base keeps musl's own malloc
-          bad mimalloc base x86-64-v2 amd64 2.1.2    # ... on every line
+          bad mimalloc base x86-64-v2 amd64 2.1.3    # ... on every line
           bad musl base x86-64-v2 amd64 2.0.9        # no patch pair for that libtorrent release
           bad musl base x86-64-v2 amd64 1.2          # a line is not a release: the tag needs its patch dir
 
@@ -262,26 +262,26 @@ jobs:
             "$(suffix mimalloc 10g x86-64-v2 amd64 1.2.20)" \
             "$(suffix mimalloc 10g armv8-a arm64 1.2.20)" \
             "$(suffix mimalloc 10g znver3 amd64 1.2.20)" \
-            "$(suffix musl base x86-64-v2 amd64 2.1.2)" \
-            "$(suffix mimalloc 10g x86-64-v2 amd64 2.1.2)" \
-            "$(suffix mimalloc 10g znver3 amd64 2.1.2)" | sort -u | wc -l)
+            "$(suffix musl base x86-64-v2 amd64 2.1.3)" \
+            "$(suffix mimalloc 10g x86-64-v2 amd64 2.1.3)" \
+            "$(suffix mimalloc 10g znver3 amd64 2.1.3)" | sort -u | wc -l)
           [[ ${suffixes} -eq 3 ]]
 
           # The default profile is the image people pull without asking for
           # anything, so no tag, moving or immutable, names it.
           names=$(printf '%s\n' \
             "$(tag musl base x86-64-v2 amd64 1.2.20)" \
-            "$(tag musl base x86-64-v2 amd64 2.1.2)" \
+            "$(tag musl base x86-64-v2 amd64 2.1.3)" \
             "$(variant musl base x86-64-v2 amd64 1.2.20)" \
-            "$(variant musl base armv8-a arm64 2.1.2)" \
+            "$(variant musl base armv8-a arm64 2.1.3)" \
             "$(immutable musl base x86-64-v2 amd64 1.2.20)" \
-            "$(immutable musl base armv8-a arm64 2.1.2)")
+            "$(immutable musl base armv8-a arm64 2.1.3)")
           if grep -q base <<< "${names}"; then
             printf 'a default-profile tag names its profile:\n%s\n' "${names}" >&2
             exit 1
           fi
           [[ $(immutable musl base armv8-a arm64 1.2.20) == sha-0123456789ab-lt1.2-arm64 ]]
-          [[ $(immutable mimalloc 10g x86-64-v2 amd64 2.1.2) == sha-0123456789ab-lt2.1-10g-amd64 ]]
+          [[ $(immutable mimalloc 10g x86-64-v2 amd64 2.1.3) == sha-0123456789ab-lt2.1-10g-amd64 ]]
 
           printf 'tag scheme ok (versioned, rolling; latest = lt%s):\n' "${default_line}"
           for t in "${lt12_amd64}" "${lt12_10g_amd64}" \

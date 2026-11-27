@@ -2,7 +2,7 @@
 
 A container image of qBittorrent, built from source, in two libtorrent lines
 side by side: **qBittorrent 5.3.1** on **libtorrent 1.2.20** and on
-**libtorrent 2.1.2**, both statically linked against musl.
+**libtorrent 2.1.3**, both statically linked against musl.
 
 Each line is built in two compiled libtorrent profiles — the **default** (safe on
 the smallest box; `PROFILE=base` to the build) and **`10g`** (tuned for a 10 Gbit
@@ -111,11 +111,11 @@ them.
 | 1.2.20 | 10g | baseline | amd64 | mimalloc | `lt1.2-10g` |
 | 1.2.20 | 10g | baseline | arm64 | mimalloc | `lt1.2-10g` |
 | 1.2.20 | 10g | znver3 | amd64 | mimalloc | `lt1.2-10g-znver3` |
-| 2.1.2 | base | baseline | amd64 | musl | `lt2.1` |
-| 2.1.2 | base | baseline | arm64 | musl | `lt2.1` |
-| 2.1.2 | 10g | baseline | amd64 | mimalloc | `lt2.1-10g` |
-| 2.1.2 | 10g | baseline | arm64 | mimalloc | `lt2.1-10g` |
-| 2.1.2 | 10g | znver3 | amd64 | mimalloc | `lt2.1-10g-znver3` |
+| 2.1.3 | base | baseline | amd64 | musl | `lt2.1` |
+| 2.1.3 | base | baseline | arm64 | musl | `lt2.1` |
+| 2.1.3 | 10g | baseline | amd64 | mimalloc | `lt2.1-10g` |
+| 2.1.3 | 10g | baseline | arm64 | mimalloc | `lt2.1-10g` |
+| 2.1.3 | 10g | znver3 | amd64 | mimalloc | `lt2.1-10g-znver3` |
 
 The default and `10g` profiles differ only in two compile-only libtorrent defaults
 (`send_not_sent_low_watermark` and `max_peer_recv_buffer_size`); four other
@@ -169,7 +169,7 @@ tooling at runtime; with `/config` and `/tmp` writable it runs with
 ## What is in the image
 
 - `qbittorrent-nox` 5.3.1, static, stripped, built on libtorrent 1.2.20 or
-  2.1.2 (the image's tag and `BUILD-INFO` say which)
+  2.1.3 (the image's tag and `BUILD-INFO` say which)
 - `unrar` 7.23 (from `ghcr.io/linuxserver/unrar`, Alpine build)
 - `7zz` 26.01 (Alpine `7zip` package, `7z` is a symlink)
 - `unzip` (busybox applet)
@@ -192,13 +192,13 @@ that line's tag:
 - `patches/libtorrent/1.2.20/base.patch` — the `base` profile: the same six,
   except `send_not_sent_low_watermark` and `max_peer_recv_buffer_size` stay at
   the stock/baseline values.
-- `patches/libtorrent/2.1.2/patch` and `patches/libtorrent/2.1.2/base.patch` —
-  the same split for libtorrent 2.1.2, re-derived against that tag.
+- `patches/libtorrent/2.1.3/patch` and `patches/libtorrent/2.1.3/base.patch` —
+  the same split for libtorrent 2.1.3, re-derived against that tag.
 
 The `LT_VERSION` build arg selects the line, and its value is the directory
 name the build script reads (`-lt v<LT_VERSION>`). See
 [patches/libtorrent/README.md](patches/libtorrent/README.md) for what each patch
-does and why, the two values that differ between the profiles, and — for 2.1.2
+does and why, the two values that differ between the profiles, and — for 2.1.3
 — why the 2.x disk settings are not in it.
 
 qBittorrent itself is built from the `release-5.3.1` tag **unpatched**. The
@@ -258,20 +258,23 @@ qBittorrent: change `QBT_VERSION` at the top of the Dockerfile (for example
 `hack/versions.sh`, and there are no per-version qBittorrent patch files.
 
 libtorrent: each line is pinned separately. To move a line, change its
-`LT_VERSION` — for the 1.2 line that is `1.2.20`, for the 2.1 line `2.1.2` —
-and regenerate that line's `patches/libtorrent/<version>/patch` and
-`base.patch` from the new tag's `src/settings_pack.cpp` (see
-[patches/libtorrent/README.md](patches/libtorrent/README.md)), then check they
-apply. Adding a third line means its patch pair plus a value in the
+`LT_VERSION` — for the 1.2 line that is `1.2.20`, for the 2.1 line `2.1.3` —
+and run `hack/lt-patches.sh <version>`, which regenerates that line's
+`patches/libtorrent/<version>/patch` and `base.patch` from the new tag's
+`src/settings_pack.cpp` and proves both apply (see
+[patches/libtorrent/README.md](patches/libtorrent/README.md)) before anything is
+committed. Adding a third line means its patch pair plus a value in the
 `LT_VERSION` case in the Dockerfile and a matrix entry in `build.yml`;
 `hack/versions.sh` accepts a line only when its patch pair is present, so a tag
 can never name a libtorrent the build has no defaults for. OpenSSL: change
 `OPENSSL_TAG` (it is shared by both lines). mimalloc: change `MIMALLOC_TAG` and
 `MIMALLOC_SHA256` together, and re-read its CMake defaults (above). Qt and
-Boost are chosen by the pinned build script: for 1.2 it pins Boost 1.86, for 2.1
-it takes the newest Boost release and Qt 6.x, so a 2.1 image's Boost and Qt
-version is whatever the pinned script resolves that day. Moving to a newer build
-script means updating its commit and sha256 together, for both lines.
+Boost: Qt comes from the pinned build script, which takes Qt 6.x, so a 2.1
+image's Qt is whatever the pinned script resolves that day; Boost is pinned per
+line (`BOOST_TAG_LT1_2`, `BOOST_TAG_LT2_1`) instead, because the script's own
+default for 2.x is "the newest release", which would let two builds of one
+commit link different Boost releases. Moving to a newer build script means
+updating its commit and sha256 together, for both lines.
 
 ## Building locally
 
@@ -301,13 +304,13 @@ docker buildx build --load --platform linux/amd64 \
   --build-arg PROFILE=10g --build-arg ALLOCATOR=mimalloc \
   -t qbittorrent:5.3.1-lt1.2-10g-znver3 .
 
-# the same on libtorrent 2.1.2: the line is LT_VERSION, everything else matches
+# the same on libtorrent 2.1.3: the line is LT_VERSION, everything else matches
 docker buildx build --load --platform linux/amd64 \
-  --build-arg LT_VERSION=2.1.2 --build-arg PROFILE=base --build-arg ALLOCATOR=musl \
+  --build-arg LT_VERSION=2.1.3 --build-arg PROFILE=base --build-arg ALLOCATOR=musl \
   --build-arg MARCH=x86-64-v2 \
   -t qbittorrent:5.3.1-lt2.1 .
 docker buildx build --load --platform linux/amd64 \
-  --build-arg LT_VERSION=2.1.2 --build-arg PROFILE=10g --build-arg ALLOCATOR=mimalloc \
+  --build-arg LT_VERSION=2.1.3 --build-arg PROFILE=10g --build-arg ALLOCATOR=mimalloc \
   -t qbittorrent:5.3.1-lt2.1-10g-znver3 .
 
 # arm64 (on an arm64 host)
@@ -413,7 +416,7 @@ naming the same bytes.
 
 `.github/workflows/build.yml` builds and verifies on every push to `main` and on
 `workflow_dispatch`, and pushes to `ghcr.io/swizzin/qbittorrent` only from
-`main`. It runs ten variants: five on libtorrent 1.2.20 and five on 2.1.2,
+`main`. It runs ten variants: five on libtorrent 1.2.20 and five on 2.1.3,
 each leg handed to `.github/workflows/image.yml`, the reusable workflow that
 builds, verifies, smoke tests and — on `main` — pushes and signs one variant.
 The eight legs that run on GitHub-hosted runners do so in parallel, so a push
@@ -429,7 +432,7 @@ Where a variant runs follows from its CPU target:
 |---|---|---|
 | `lt<lt>-amd64`, `lt<lt>-10g-amd64` (`x86-64-v2`) | `ubuntu-24.04` | the baseline ISA: builds and runs on any x86-64 host |
 | `lt<lt>-arm64`, `lt<lt>-10g-arm64` (`armv8-a`) | `ubuntu-24.04-arm` | native arm64: the runtime image and the smoke test are arm64 code, so nothing is emulated |
-| `lt1.2.20-10g-znver3`, `lt2.1.2-10g-znver3` | self-hosted, labelled `znver3` | a `znver3` binary dies with SIGILL on any other CPU, so its smoke test needs the target |
+| `lt1.2.20-10g-znver3`, `lt2.1.3-10g-znver3` | self-hosted, labelled `znver3` | a `znver3` binary dies with SIGILL on any other CPU, so its smoke test needs the target |
 
 Both lines have the same five legs: the two default-profile baselines, the 10g
 baseline on amd64 and arm64, and 10g-znver3. The allocator follows the profile
@@ -482,7 +485,7 @@ OpenSSL possible at all. libtorrent is BSD-3-Clause, and Qt, OpenSSL, Boost and
 zlib are under their own licences.
 
 **Corresponding source**: the upstream release tags — qBittorrent
-`release-5.3.1`, libtorrent `v1.2.20` or `v2.1.2` (the line the image was
+`release-5.3.1`, libtorrent `v1.2.20` or `v2.1.3` (the line the image was
 built on), OpenSSL `openssl-3.5.9` (`OPENSSL_TAG`) and the versions of the rest
 that the pinned build script selects — plus that line's directory under
 `patches/libtorrent/` from this repository. Every pin, and the sha256 of the

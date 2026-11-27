@@ -1,28 +1,33 @@
-# libtorrent 2.1.2 compiled defaults
+# libtorrent 2.1.3 compiled defaults
 
-Two patch files in this directory, both generated from the tagged `v2.1.2`
+Two patch files in this directory, both generated from the tagged `v2.1.3`
 `src/settings_pack.cpp` and applied by the build script as
-`qbt-build/patches/libtorrent/2.1.2/patch`:
+`qbt-build/patches/libtorrent/2.1.3/patch`:
 
 | file | profile | what it changes |
 |---|---|---|
 | `patch` | `10g` | six `SET(...)` defaults (the 10g build) |
 | `base.patch` | `base` | the same six except the two that scale with the box |
 
-They target **libtorrent v2.1.2** and **qBittorrent 5.3.0**
-(`release-5.3.0`). The directory name is what
-`qbittorrent-nox-static.sh -lt v2.1.2` creates and reads
-(`qbt-build/patches/libtorrent/2.1.2/`); verified by bootstrapping the pinned
-script in a throwaway Alpine container with `-lt v2.1.2 -qt release-5.3.0
--bs-a` and listing `qbt-build/patches`. The Dockerfile stages exactly one of
-the two files into that path, chosen by the `PROFILE` build arg — the script
-merges every `*.patch`/`*.diff` file it finds in the directory, so the two must
-not both land there. Upstream ships no libtorrent 2.1.2 patch of its own, so
-nothing is layered on the same file.
+They target **libtorrent v2.1.3** and **qBittorrent 5.3.1**
+(`release-5.3.1`). The directory name is what
+`qbittorrent-nox-static.sh -lt v2.1.3` creates and reads
+(`qbt-build/patches/libtorrent/2.1.3/`); verified by bootstrapping the pinned
+script in a throwaway Alpine container with `-lt v2.1.3 -qt release-5.3.1
+-bs-a` and listing `qbt-build/patches`, which came back with `2.1.3/` and
+`5.3.1/`. The Dockerfile stages exactly one of the two files into that path,
+chosen by the `PROFILE` build arg — the script merges every `*.patch`/`*.diff`
+file it finds in the directory, so the two must not both land there. Upstream
+ships no libtorrent 2.1.3 patch: the pinned script at
+`66a0aa3fd2044dcd2a327670aba35779b0957e34` creates that directory with an empty
+`source/` inside and fetches nothing for it. The only libtorrent patch userdocs
+publishes is a 1.2.20 one (Boost 1.87–1.92 and OpenSSL 4 support), added after
+that commit and irrelevant here.
 
-Generated from the tagged source, not by hand; both `git apply --check -p1` and
-`patch -p1 --dry-run` pass against a pristine `v2.1.2` tree, and the applied
-tree reads back six (10g) and five (base) rewritten lines.
+Generated from the tagged source, not by hand: `hack/lt-patches.sh 2.1.3`
+writes both files, then checks them with `git apply --check -p1` and
+`patch -p1 --dry-run` against a pristine tree of the tag, applies them for
+real, and reads back six (10g) and five (base) rewritten lines.
 
 ## Same intent as 1.2.20, re-derived for this branch
 
@@ -61,35 +66,57 @@ The socket buffers themselves (`send_socket_buffer_size`,
 `recv_socket_buffer_size`) and the send-buffer watermarks are qBittorrent
 preferences, so they stay runtime (`qBittorrent.conf`), not compiled.
 
+## What 2.1.3 changed in this file
+
+`src/settings_pack.cpp` between `v2.1.2` and `v2.1.3` changes three things,
+none of them one of the six:
+
+- `peer_fingerprint`, `-LT2120-` to `-LT2130-` (`settings_pack.cpp:127`), which
+  is what makes a 2.1.3 client identifiable in a peer list. qBittorrent
+  overwrites it with its own fingerprint at session start
+  (`sessionimpl.cpp:1812`), so an image built from this line does not report
+  it anyway.
+- `announce_to_all_tiers` and `announce_to_all_trackers` swap places
+  (`settings_pack.cpp:153-154`); both stay `false` and qBittorrent sets both
+  (`sessionimpl.cpp:2091-2092`).
+- `max_out_request_queue`'s stock value, 500 to 1500
+  (`settings_pack.cpp:237`). It only moves the context line of our second hunk,
+  and it is inert either way: qBittorrent sets it from its own
+  `Session\RequestQueueSize` at every start (`sessionimpl.cpp:2098`).
+
 ## What 2.1 adds, and why none of it is in the patch
 
 The 2.x disk layer is where a community profile usually starts adding lines. On
-a libtorrent-2 build, qBittorrent 5.3.0 sets all of them from its own
-preferences at every session start (`src/base/bittorrent/sessionimpl.cpp`,
-`loadLTSettings()` and `initializeNativeSession()`), so a compiled default is
+a libtorrent-2 build, qBittorrent 5.3.1 sets all of them from its own
+preferences at every session start (`loadLTSettings()`,
+`src/base/bittorrent/sessionimpl.cpp:1973`), so a compiled default is
 overwritten before the session exists and changes nothing:
 
 | setting | who sets it |
 |---|---|
-| `aio_threads` | qBittorrent, every build (`Session\AsyncIOThreadsCount`) |
-| `hashing_threads` | qBittorrent, libtorrent-2 builds only (`Session\HashingThreadsCount`) |
-| `max_queued_disk_bytes` | qBittorrent (`Session\DiskQueueSize`) |
-| `disk_io_read_mode`, `disk_io_write_mode` | qBittorrent (`Session\DiskIOReadMode`/`DiskIOWriteMode`, including 2.x's `write_through`) |
-| `mmap_file_size_cutoff`, `disk_write_mode` | qBittorrent in its `SimplePreadPwrite` case |
-| posix vs mmap disk I/O | not a setting at all: qBittorrent chooses the disk I/O constructor (`DiskIOType`) |
-| `checking_mem_usage`, `file_pool_size`, `piece_extent_affinity`, `suggest_mode`, `send_buffer_*` | qBittorrent |
+| `aio_threads` | qBittorrent, every build (`Session\AsyncIOThreadsCount`, `sessionimpl.cpp:2105`) |
+| `hashing_threads` | qBittorrent, libtorrent-2 builds only (`Session\HashingThreadsCount`, `sessionimpl.cpp:2107`, under `#ifdef QBT_USES_LIBTORRENT2`) |
+| `max_queued_disk_bytes` | qBittorrent (`Session\DiskQueueSize`, `sessionimpl.cpp:2120`) |
+| `disk_io_read_mode`, `disk_io_write_mode` | qBittorrent (`Session\DiskIOReadMode`/`DiskIOWriteMode`, `sessionimpl.cpp:2125-2144`, including 2.x's `write_through`) |
+| `mmap_file_size_cutoff`, `disk_write_mode` | qBittorrent in its `SimplePreadPwrite` case (`sessionimpl.cpp:1830-1833`) |
+| posix vs mmap disk I/O | not a setting at all: qBittorrent chooses the disk I/O constructor (`DiskIOType`: `Posix`, `MMap`, `SimplePreadPwrite`, `PreadPwrite`, `sessionimpl.cpp:1839-1854`) |
+| `checking_mem_usage`, `file_pool_size`, `piece_extent_affinity`, `suggest_mode`, `send_buffer_*` | qBittorrent (`sessionimpl.cpp:2109-2161`) |
 
 `cache_size`, `cache_expiry`, `coalesce_reads` and `coalesce_writes` still exist
-on 2.1.2 but are `DEPRECATED_SET` (and are only assigned under
-`#ifndef QBT_USES_LIBTORRENT2` in qBittorrent), so patching them would be
-inert: the 2.x disk cache is caches and the app builds its own disk I/O. They
-are dropped here and are not in the 1.2-style exclusion list as anything but
-deprecated.
+on 2.1.3 but are `DEPRECATED_SET` (`settings_pack.cpp:146-147`, `262-264`), and
+qBittorrent only assigns them under `#ifndef QBT_USES_LIBTORRENT2`
+(`sessionimpl.cpp:2116-2117`, `2150-2151`), so on this line they are inert
+twice over: the 2.x disk cache is caches and the app builds its own disk I/O.
+They are dropped here and are not in the 1.2-style exclusion list as anything
+but deprecated.
 
-None of the six settings in this patch is set by qBittorrent 5.3.0 in either
+None of the six settings in this patch is set by qBittorrent 5.3.1 in either
 build mode, and none has a WebUI preference key in
-`src/webui/api/appcontroller.cpp`: compiling them in is the only way to change
-them.
+`src/webui/api/appcontroller.cpp`: `request_timeout`,
+`whole_pieces_threshold`, `max_peer_recv_buffer_size`,
+`torrent_connect_boost`, `predictive_piece_announce` and
+`send_not_sent_low_watermark` appear nowhere in qBittorrent's `src/` at
+`release-5.3.1`, so compiling them in is the only way to change them.
 
 ## Deliberately excluded
 
@@ -124,7 +151,7 @@ them.
 
 ## Runtime settings that go with this build
 
-Recommended `qBittorrent.conf` values for the 10g profile on 2.1.2. They are a
+Recommended `qBittorrent.conf` values for the 10g profile on 2.1.3. They are a
 starting point written once, never re-applied: a user changing them is not
 drift. The base profile's runtime presets are the stock qBittorrent defaults
 with a lower send-buffer watermark; only the compiled values are fixed at build
@@ -147,6 +174,10 @@ time, nothing here is.
 
 Check whether userdocs' own patch set for that libtorrent version touches
 `src/settings_pack.cpp`; if it does, fold the two together rather than layering
-a second patch on the same file. Upstream ships no 2.1.2 patch today, and the
+a second patch on the same file. Upstream ships no 2.1.3 patch, and the
 Dockerfile takes the local-patch path (no remote fetch) for both libtorrent and
 qBittorrent.
+
+Regenerate with `hack/lt-patches.sh <version>`, never by hand: it fails by name
+when a stock line has moved, which is the failure mode that otherwise ships
+stock values in a build that looks fine.

@@ -3,7 +3,7 @@
 #
 #   eval "$(hack/versions.sh)"                                  # defaults
 #   eval "$(hack/versions.sh mimalloc 10g znver3 amd64 1.2.20)"  # explicit axes
-#   eval "$(hack/versions.sh musl base x86-64-v2 amd64 2.1.2)"   # the 2.1 line
+#   eval "$(hack/versions.sh musl base x86-64-v2 amd64 2.1.3)"   # the 2.1 line
 #
 # Positional arguments, in order: ALLOCATOR, PROFILE, MARCH, ARCH, LT. The
 # Dockerfile is the single source of truth for the version pins and for the
@@ -14,7 +14,7 @@
 # That includes the allocator, which is not a free axis: the Dockerfile builds
 # base+musl and 10g+mimalloc and nothing else, so no other pairing is accepted.
 #
-# LT is the libtorrent release, given as its exact version (1.2.20 or 2.1.2).
+# LT is the libtorrent release, given as its exact version (1.2.20 or 2.1.3).
 # It defaults to the Dockerfile's LT_VERSION pin, and it is only accepted when
 # this repository carries a patch pair for it: patches/libtorrent/<lt>/ is the
 # directory the build script reads for -lt v<lt>, so a release without one
