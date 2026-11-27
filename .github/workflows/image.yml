@@ -207,8 +207,8 @@ jobs:
             printf 'refusing to re-push immutable tag %s: it already exists\n' "${IMMUTABLE_TAG}" >&2
             exit 1
           fi
-          read -ra push_tags <<< "${PUSH_TAGS}"
-          for tag in "${IMMUTABLE_TAG}" "${push_tags[@]}"; do
+          read -ra tags <<< "${PUSH_TAGS}"
+          for tag in "${IMMUTABLE_TAG}" "${tags[@]}"; do
             docker tag "${IMAGE}:${IMAGE_TAG}" "${IMAGE}:${tag}"
             docker push "${IMAGE}:${tag}"
           done
