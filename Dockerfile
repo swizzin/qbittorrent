@@ -55,7 +55,7 @@ ARG ALLOCATOR=musl
 # to hand someone who did not ask for it.
 ARG PROFILE=base
 
-ARG ALPINE_IMAGE=docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+ARG ALPINE_IMAGE=docker.io/library/alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 ARG UNRAR_IMAGE=ghcr.io/linuxserver/unrar@sha256:48c0ce2609bb3c35764956bbd9395e95b177421e3c74b3628c3676029f24f2e0
 
 ###############################################################################
